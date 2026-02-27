@@ -291,6 +291,13 @@ export class WcdbService {
   }
 
   /**
+   * 批量获取联系人 extra_buffer 状态（isFolded/isMuted）
+   */
+  async getContactStatus(usernames: string[]): Promise<{ success: boolean; map?: Record<string, { isFolded: boolean; isMuted: boolean }>; error?: string }> {
+    return this.callWorker('getContactStatus', { usernames })
+  }
+
+  /**
    * 获取聚合统计数据
    */
   async getAggregateStats(sessionIds: string[], beginTimestamp: number = 0, endTimestamp: number = 0): Promise<{ success: boolean; data?: any; error?: string }> {

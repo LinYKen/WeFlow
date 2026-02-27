@@ -866,6 +866,73 @@
   }
 }
 
+// Header 双 panel 滑动动画
+.session-header-viewport {
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+
+  .session-header-panel {
+    flex: 0 0 100%;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    padding: 16px 16px 12px;
+    min-height: 56px;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .main-header {
+    transform: translateX(0);
+    justify-content: space-between;
+  }
+
+  .folded-header {
+    transform: translateX(0);
+  }
+
+  &.folded {
+    .main-header { transform: translateX(-100%); }
+    .folded-header { transform: translateX(-100%); }
+  }
+}
+
+.folded-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+
+  .back-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+
+    &:hover {
+      background: var(--bg-hover);
+    }
+  }
+
+  .folded-view-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+}
+
 @keyframes searchExpand {
   from {
     opacity: 0;
@@ -3862,5 +3929,136 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+  }
+}
+
+// 折叠群视图 header
+.folded-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  width: 100%;
+
+  .back-btn {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    &:hover {
+      color: var(--text-primary);
+    }
+  }
+
+  .folded-view-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+}
+
+// 双 panel 滑动容器
+.session-list-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  // 两个 panel 并排，宽度各 100%，通过 translateX 切换
+  width: 100%;
+
+  .session-list-panel {
+    flex: 0 0 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  // 默认：main 在视口内，folded 在右侧外
+  .main-panel {
+    transform: translateX(0);
+  }
+  .folded-panel {
+    transform: translateX(0);
+  }
+
+  // 切换到折叠群视图：两个 panel 同时左移 100%
+  &.folded {
+    .main-panel {
+      transform: translateX(-100%);
+    }
+    .folded-panel {
+      transform: translateX(-100%);
+    }
+  }
+
+  .session-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+      &:hover {
+        background: rgba(0, 0, 0, 0.3);
+      }
+    }
+  }
+}
+
+// 免打扰标识
+.session-item {
+  &.muted {
+    .session-name {
+      color: var(--text-secondary);
+    }
+  }
+
+  .session-badges {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+
+    .mute-icon {
+      color: var(--text-tertiary, #aaa);
+      opacity: 0.7;
+    }
+
+    .unread-badge.muted {
+      background: var(--text-tertiary, #aaa);
+      box-shadow: none;
+    }
+  }
+}
+
+// 折叠群入口样式
+.session-item.fold-entry {
+  background: var(--card-inner-bg, rgba(0,0,0,0.03));
+
+  .fold-entry-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    background: var(--primary-color, #07c160);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #fff;
+  }
+
+  .session-name {
+    font-weight: 500;
   }
 }

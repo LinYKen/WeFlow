@@ -34,6 +34,8 @@ export interface ChatSession {
   lastMsgSender?: string
   lastSenderDisplayName?: string
   selfWxid?: string
+  isFolded?: boolean  // 是否已折叠进"折叠的群聊"
+  isMuted?: boolean   // 是否开启免打扰
 }
 
 export interface Message {
@@ -413,10 +415,27 @@ class ChatService {
           lastMsgType,
           displayName,
           avatarUrl,
-          lastMsgSender: row.last_msg_sender, // 数据库返回字段
-          lastSenderDisplayName: row.last_sender_display_name, // 数据库返回字段
+          lastMsgSender: row.last_msg_sender,
+          lastSenderDisplayName: row.last_sender_display_name,
           selfWxid: myWxid
         })
+      }
+
+      // 批量拉取 extra_buffer 状态（isFolded/isMuted），不阻塞主流程
+      const allUsernames = sessions.map(s => s.username)
+      try {
+        const statusResult = await wcdbService.getContactStatus(allUsernames)
+        if (statusResult.success && statusResult.map) {
+          for (const s of sessions) {
+            const st = statusResult.map[s.username]
+            if (st) {
+              s.isFolded = st.isFolded
+              s.isMuted = st.isMuted
+            }
+          }
+        }
+      } catch {
+        // 状态获取失败不影响会话列表返回
       }
 
       // 不等待联系人信息加载，直接返回基础会话列表
@@ -2846,15 +2865,16 @@ class ChatService {
   private shouldKeepSession(username: string): boolean {
     if (!username) return false
     const lowered = username.toLowerCase()
-    if (lowered.includes('@placeholder') || lowered.includes('foldgroup')) return false
+    // placeholder_foldgroup 是折叠群入口，需要保留
+    if (lowered.includes('@placeholder') && !lowered.includes('foldgroup')) return false
     if (username.startsWith('gh_')) return false
 
     const excludeList = [
       'weixin', 'qqmail', 'fmessage', 'medianote', 'floatbottle',
       'newsapp', 'brandsessionholder', 'brandservicesessionholder',
       'notifymessage', 'opencustomerservicemsg', 'notification_messages',
-      'userexperience_alarm', 'helper_folders', 'placeholder_foldgroup',
-      '@helper_folders', '@placeholder_foldgroup'
+      'userexperience_alarm', 'helper_folders',
+      '@helper_folders'
     ]
 
     for (const prefix of excludeList) {

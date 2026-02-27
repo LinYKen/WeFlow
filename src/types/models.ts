@@ -12,6 +12,8 @@ export interface ChatSession {
   lastMsgSender?: string
   lastSenderDisplayName?: string
   selfWxid?: string // Helper field to avoid extra API calls
+  isFolded?: boolean  // 是否已折叠进"折叠的群聊"
+  isMuted?: boolean   // 是否开启免打扰
 }
 
 // 联系人

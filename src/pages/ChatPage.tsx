@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Search, MessageSquare, AlertCircle, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Play, Pause, Image as ImageIcon, Link, Mic, CheckCircle, Copy, Check, CheckSquare, Download, BarChart3, Edit2, Trash2 } from 'lucide-react'
+import { Search, MessageSquare, AlertCircle, Loader2, RefreshCw, X, ChevronDown, ChevronLeft, Info, Calendar, Database, Hash, Play, Pause, Image as ImageIcon, Link, Mic, CheckCircle, Copy, Check, CheckSquare, Download, BarChart3, Edit2, Trash2, BellOff, Users, FolderClosed } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { useChatStore } from '../stores/chatStore'
@@ -178,15 +178,38 @@ const SessionItem = React.memo(function SessionItem({
   onSelect: (session: ChatSession) => void
   formatTime: (timestamp: number) => string
 }) {
-  // 缓存格式化的时间
   const timeText = useMemo(() =>
     formatTime(session.lastTimestamp || session.sortTimestamp),
     [formatTime, session.lastTimestamp, session.sortTimestamp]
   )
 
+  const isFoldEntry = session.username.toLowerCase().includes('placeholder_foldgroup')
+
+  // 折叠入口：专属名称和图标
+  if (isFoldEntry) {
+    return (
+      <div
+        className={`session-item fold-entry`}
+        onClick={() => onSelect(session)}
+      >
+        <div className="fold-entry-avatar">
+          <FolderClosed size={22} />
+        </div>
+        <div className="session-info">
+          <div className="session-top">
+            <span className="session-name">折叠的群聊</span>
+          </div>
+          <div className="session-bottom">
+            <span className="session-summary">{session.summary || ''}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
-      className={`session-item ${isActive ? 'active' : ''}`}
+      className={`session-item ${isActive ? 'active' : ''} ${session.isMuted ? 'muted' : ''}`}
       onClick={() => onSelect(session)}
     >
       <Avatar
@@ -202,17 +225,19 @@ const SessionItem = React.memo(function SessionItem({
         </div>
         <div className="session-bottom">
           <span className="session-summary">{session.summary || '暂无消息'}</span>
-          {session.unreadCount > 0 && (
-            <span className="unread-badge">
-              {session.unreadCount > 99 ? '99+' : session.unreadCount}
-            </span>
-          )}
+          <div className="session-badges">
+            {session.isMuted && <BellOff size={12} className="mute-icon" />}
+            {session.unreadCount > 0 && (
+              <span className={`unread-badge ${session.isMuted ? 'muted' : ''}`}>
+                {session.unreadCount > 99 ? '99+' : session.unreadCount}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
   )
 }, (prevProps, nextProps) => {
-  // 自定义比较：只在关键属性变化时重渲染
   return (
     prevProps.session.username === nextProps.session.username &&
     prevProps.session.displayName === nextProps.session.displayName &&
@@ -221,6 +246,7 @@ const SessionItem = React.memo(function SessionItem({
     prevProps.session.unreadCount === nextProps.session.unreadCount &&
     prevProps.session.lastTimestamp === nextProps.session.lastTimestamp &&
     prevProps.session.sortTimestamp === nextProps.session.sortTimestamp &&
+    prevProps.session.isMuted === nextProps.session.isMuted &&
     prevProps.isActive === nextProps.isActive
   )
 })
@@ -288,6 +314,7 @@ function ChatPage(_props: ChatPageProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [highlightedMessageKeys, setHighlightedMessageKeys] = useState<string[]>([])
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false)
+  const [foldedView, setFoldedView] = useState(false) // 是否在"折叠的群聊"视图
   const [hasInitialMessages, setHasInitialMessages] = useState(false)
   const [noMessageTable, setNoMessageTable] = useState(false)
   const [fallbackDisplayName, setFallbackDisplayName] = useState<string | null>(null)
@@ -995,6 +1022,11 @@ function ChatPage(_props: ChatPageProps) {
 
   // 选择会话
   const handleSelectSession = (session: ChatSession) => {
+    // 点击折叠群入口，切换到折叠群视图
+    if (session.username.toLowerCase().includes('placeholder_foldgroup')) {
+      setFoldedView(true)
+      return
+    }
     if (session.username === currentSessionId) return
     setCurrentSession(session.username)
     setCurrentOffset(0)
@@ -1011,27 +1043,11 @@ function ChatPage(_props: ChatPageProps) {
   // 搜索过滤
   const handleSearch = (keyword: string) => {
     setSearchKeyword(keyword)
-    if (!Array.isArray(sessions)) {
-      setFilteredSessions([])
-      return
-    }
-    if (!keyword.trim()) {
-      setFilteredSessions(sessions)
-      return
-    }
-    const lower = keyword.toLowerCase()
-    const filtered = sessions.filter(s =>
-      s.displayName?.toLowerCase().includes(lower) ||
-      s.username.toLowerCase().includes(lower) ||
-      s.summary.toLowerCase().includes(lower)
-    )
-    setFilteredSessions(filtered)
   }
 
   // 关闭搜索框
   const handleCloseSearch = () => {
     setSearchKeyword('')
-    setFilteredSessions(Array.isArray(sessions) ? sessions : [])
   }
 
   // 滚动加载更多 + 显示/隐藏回到底部按钮（优化：节流，避免频繁执行）
@@ -1303,23 +1319,40 @@ function ChatPage(_props: ChatPageProps) {
     searchKeywordRef.current = searchKeyword
   }, [searchKeyword])
 
+  // 普通视图：隐藏 isFolded 的群，保留 placeholder_foldgroup 入口
   useEffect(() => {
     if (!Array.isArray(sessions)) {
       setFilteredSessions([])
       return
     }
+    const visible = sessions.filter(s => {
+      if (s.isFolded && !s.username.toLowerCase().includes('placeholder_foldgroup')) return false
+      return true
+    })
     if (!searchKeyword.trim()) {
-      setFilteredSessions(sessions)
+      setFilteredSessions(visible)
       return
     }
     const lower = searchKeyword.toLowerCase()
-    const filtered = sessions.filter(s =>
+    setFilteredSessions(visible.filter(s =>
+      s.displayName?.toLowerCase().includes(lower) ||
+      s.username.toLowerCase().includes(lower) ||
+      s.summary.toLowerCase().includes(lower)
+    ))
+  }, [sessions, searchKeyword, setFilteredSessions])
+
+  // 折叠群列表（独立计算，供折叠 panel 使用）
+  const foldedSessions = useMemo(() => {
+    if (!Array.isArray(sessions)) return []
+    const folded = sessions.filter(s => s.isFolded)
+    if (!searchKeyword.trim() || !foldedView) return folded
+    const lower = searchKeyword.toLowerCase()
+    return folded.filter(s =>
       s.displayName?.toLowerCase().includes(lower) ||
       s.username.toLowerCase().includes(lower) ||
       s.summary.toLowerCase().includes(lower)
     )
-    setFilteredSessions(filtered)
-  }, [sessions, searchKeyword, setFilteredSessions])
+  }, [sessions, searchKeyword, foldedView])
 
 
   // 格式化会话时间（相对时间）- 使用 useMemo 缓存，避免每次渲染都计算
@@ -1984,26 +2017,41 @@ function ChatPage(_props: ChatPageProps) {
         ref={sidebarRef}
         style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
       >
-        <div className="session-header">
-          <div className="search-row">
-            <div className="search-box expanded">
-              <Search size={14} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="搜索"
-                value={searchKeyword}
-                onChange={(e) => handleSearch(e.target.value)}
-              />
-              {searchKeyword && (
-                <button className="close-search" onClick={handleCloseSearch}>
-                  <X size={12} />
-                </button>
-              )}
+        <div className={`session-header session-header-viewport ${foldedView ? 'folded' : ''}`}>
+          {/* 普通 header */}
+          <div className="session-header-panel main-header">
+            <div className="search-row">
+              <div className="search-box expanded">
+                <Search size={14} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="搜索"
+                  value={searchKeyword}
+                  onChange={(e) => handleSearch(e.target.value)}
+                />
+                {searchKeyword && (
+                  <button className="close-search" onClick={handleCloseSearch}>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+              <button className="icon-btn refresh-btn" onClick={handleRefresh} disabled={isLoadingSessions || isRefreshingSessions}>
+                <RefreshCw size={16} className={(isLoadingSessions || isRefreshingSessions) ? 'spin' : ''} />
+              </button>
             </div>
-            <button className="icon-btn refresh-btn" onClick={handleRefresh} disabled={isLoadingSessions || isRefreshingSessions}>
-              <RefreshCw size={16} className={(isLoadingSessions || isRefreshingSessions) ? 'spin' : ''} />
-            </button>
+          </div>
+          {/* 折叠群 header */}
+          <div className="session-header-panel folded-header">
+            <div className="folded-view-header">
+              <button className="icon-btn back-btn" onClick={() => setFoldedView(false)}>
+                <ChevronLeft size={18} />
+              </button>
+              <span className="folded-view-title">
+                <Users size={14} />
+                折叠的群聊
+              </span>
+            </div>
           </div>
         </div>
 
@@ -2018,7 +2066,6 @@ function ChatPage(_props: ChatPageProps) {
         {/* ... (previous content) ... */}
         {isLoadingSessions ? (
           <div className="loading-sessions">
-            {/* ... (skeleton items) ... */}
             {[1, 2, 3, 4, 5].map(i => (
               <div key={i} className="skeleton-item">
                 <div className="skeleton-avatar" />
@@ -2029,36 +2076,65 @@ function ChatPage(_props: ChatPageProps) {
               </div>
             ))}
           </div>
-        ) : Array.isArray(filteredSessions) && filteredSessions.length > 0 ? (
-          <div
-            className="session-list"
-            ref={sessionListRef}
-            onScroll={() => {
-              isScrollingRef.current = true
-              if (sessionScrollTimeoutRef.current) {
-                clearTimeout(sessionScrollTimeoutRef.current)
-              }
-              sessionScrollTimeoutRef.current = window.setTimeout(() => {
-                isScrollingRef.current = false
-                sessionScrollTimeoutRef.current = null
-              }, 200)
-            }}
-          >
-            {filteredSessions.map(session => (
-              <SessionItem
-                key={session.username}
-                session={session}
-                isActive={currentSessionId === session.username}
-                onSelect={handleSelectSession}
-                formatTime={formatSessionTime}
-              />
-            ))}
-          </div>
         ) : (
-          <div className="empty-sessions">
-            <MessageSquare />
-            <p>暂无会话</p>
-            <p className="hint">请先在数据管理页面解密数据库</p>
+          <div className={`session-list-viewport ${foldedView ? 'folded' : ''}`}>
+            {/* 普通会话列表 */}
+            <div className="session-list-panel main-panel">
+              {Array.isArray(filteredSessions) && filteredSessions.length > 0 ? (
+                <div
+                  className="session-list"
+                  ref={sessionListRef}
+                  onScroll={() => {
+                    isScrollingRef.current = true
+                    if (sessionScrollTimeoutRef.current) {
+                      clearTimeout(sessionScrollTimeoutRef.current)
+                    }
+                    sessionScrollTimeoutRef.current = window.setTimeout(() => {
+                      isScrollingRef.current = false
+                      sessionScrollTimeoutRef.current = null
+                    }, 200)
+                  }}
+                >
+                  {filteredSessions.map(session => (
+                    <SessionItem
+                      key={session.username}
+                      session={session}
+                      isActive={currentSessionId === session.username}
+                      onSelect={handleSelectSession}
+                      formatTime={formatSessionTime}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-sessions">
+                  <MessageSquare />
+                  <p>暂无会话</p>
+                  <p className="hint">请先在数据管理页面解密数据库</p>
+                </div>
+              )}
+            </div>
+
+            {/* 折叠群列表 */}
+            <div className="session-list-panel folded-panel">
+              {foldedSessions.length > 0 ? (
+                <div className="session-list">
+                  {foldedSessions.map(session => (
+                    <SessionItem
+                      key={session.username}
+                      session={session}
+                      isActive={currentSessionId === session.username}
+                      onSelect={handleSelectSession}
+                      formatTime={formatSessionTime}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-sessions">
+                  <Users size={32} />
+                  <p>没有折叠的群聊</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

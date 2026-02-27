@@ -3,6 +3,48 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, readFileS
 
 // DLL 初始化错误信息，用于帮助用户诊断问题
 let lastDllInitError: string | null = null
+
+/**
+ * 解析 extra_buffer（protobuf）中的免打扰状态
+ * - field 12 (tag 0x60): 值非0 = 免打扰
+ * 折叠状态通过 contact.flag & 0x10000000 判断
+ */
+function parseExtraBuffer(raw: Buffer | string | null | undefined): { isMuted: boolean } {
+  if (!raw) return { isMuted: false }
+  // execQuery 返回的 BLOB 列是十六进制字符串，需要先解码
+  const buf: Buffer = typeof raw === 'string' ? Buffer.from(raw, 'hex') : raw
+  if (buf.length === 0) return { isMuted: false }
+  let isMuted = false
+  let i = 0
+  const len = buf.length
+
+  const readVarint = (): number => {
+    let result = 0, shift = 0
+    while (i < len) {
+      const b = buf[i++]
+      result |= (b & 0x7f) << shift
+      shift += 7
+      if (!(b & 0x80)) break
+    }
+    return result
+  }
+
+  while (i < len) {
+    const tag = readVarint()
+    const fieldNum = tag >>> 3
+    const wireType = tag & 0x07
+    if (wireType === 0) {
+      const val = readVarint()
+      if (fieldNum === 12 && val !== 0) isMuted = true
+    } else if (wireType === 2) {
+      const sz = readVarint()
+      i += sz
+    } else if (wireType === 5) { i += 4
+    } else if (wireType === 1) { i += 8
+    } else { break }
+  }
+  return { isMuted }
+}
 export function getLastDllInitError(): string | null {
   return lastDllInitError
 }
@@ -41,6 +83,7 @@ export class WcdbCore {
   private wcdbGetMessageTables: any = null
   private wcdbGetMessageMeta: any = null
   private wcdbGetContact: any = null
+  private wcdbGetContactStatus: any = null
   private wcdbGetMessageTableStats: any = null
   private wcdbGetAggregateStats: any = null
   private wcdbGetAvailableYears: any = null
@@ -486,6 +529,13 @@ export class WcdbCore {
 
       // wcdb_status wcdb_get_contact(wcdb_handle handle, const char* username, char** out_json)
       this.wcdbGetContact = this.lib.func('int32 wcdb_get_contact(int64 handle, const char* username, _Out_ void** outJson)')
+
+      // wcdb_status wcdb_get_contact_status(wcdb_handle handle, const char* usernames_json, char** out_json)
+      try {
+        this.wcdbGetContactStatus = this.lib.func('int32 wcdb_get_contact_status(int64 handle, const char* usernamesJson, _Out_ void** outJson)')
+      } catch {
+        this.wcdbGetContactStatus = null
+      }
 
       // wcdb_status wcdb_get_message_table_stats(wcdb_handle handle, const char* session_id, char** out_json)
       this.wcdbGetMessageTableStats = this.lib.func('int32 wcdb_get_message_table_stats(int64 handle, const char* sessionId, _Out_ void** outJson)')
@@ -1365,6 +1415,36 @@ export class WcdbCore {
       if (!jsonStr) return { success: false, error: '解析联系人失败' }
       const contact = JSON.parse(jsonStr)
       return { success: true, contact }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  async getContactStatus(usernames: string[]): Promise<{ success: boolean; map?: Record<string, { isFolded: boolean; isMuted: boolean }>; error?: string }> {
+    if (!this.ensureReady()) {
+      return { success: false, error: 'WCDB 未连接' }
+    }
+    try {
+      // 分批查询，避免 SQL 过长（execQuery 不支持参数绑定，直接拼 SQL）
+      const BATCH = 200
+      const map: Record<string, { isFolded: boolean; isMuted: boolean }> = {}
+      for (let i = 0; i < usernames.length; i += BATCH) {
+        const batch = usernames.slice(i, i + BATCH)
+        const inList = batch.map(u => `'${u.replace(/'/g, "''")}'`).join(',')
+        const sql = `SELECT username, flag, extra_buffer FROM contact WHERE username IN (${inList})`
+        const result = await this.execQuery('contact', null, sql)
+        if (!result.success || !result.rows) continue
+        for (const row of result.rows) {
+          const uname: string = row.username
+          // 折叠：flag bit 28 (0x10000000)
+          const flag = parseInt(row.flag ?? '0', 10)
+          const isFolded = (flag & 0x10000000) !== 0
+          // 免打扰：extra_buffer field 12 非0
+          const { isMuted } = parseExtraBuffer(row.extra_buffer)
+          map[uname] = { isFolded, isMuted }
+        }
+      }
+      return { success: true, map }
     } catch (e) {
       return { success: false, error: String(e) }
     }

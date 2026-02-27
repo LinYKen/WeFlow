@@ -87,6 +87,9 @@ if (parentPort) {
                 case 'getContact':
                     result = await core.getContact(payload.username)
                     break
+                case 'getContactStatus':
+                    result = await core.getContactStatus(payload.usernames)
+                    break
                 case 'getAggregateStats':
                     result = await core.getAggregateStats(payload.sessionIds, payload.beginTimestamp, payload.endTimestamp)
                     break
