@@ -1,9 +1,8 @@
 import { app } from 'electron'
-import { join, dirname, basename } from 'path'
-import { existsSync, readdirSync, readFileSync, statSync, copyFileSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
+import { existsSync, copyFileSync, mkdirSync } from 'fs'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { Worker } from 'worker_threads'
 import os from 'os'
 
 const execFileAsync = promisify(execFile)
@@ -20,13 +19,14 @@ export class KeyService {
   private getStatusMessage: any = null
   private cleanupHook: any = null
   private getLastErrorMsg: any = null
+  private getImageKeyDll: any = null
 
   // Win32 APIs
   private kernel32: any = null
   private user32: any = null
   private advapi32: any = null
 
-  // Kernel32 (已移除内存扫描相关的 API)
+  // Kernel32
   private OpenProcess: any = null
   private CloseHandle: any = null
   private TerminateProcess: any = null
@@ -126,6 +126,7 @@ export class KeyService {
       this.getStatusMessage = this.lib.func('bool GetStatusMessage(_Out_ char *msgBuffer, int bufferSize, _Out_ int *outLevel)')
       this.cleanupHook = this.lib.func('bool CleanupHook()')
       this.getLastErrorMsg = this.lib.func('const char* GetLastErrorMsg()')
+      this.getImageKeyDll = this.lib.func('bool GetImageKey(_Out_ char *resultBuffer, int bufferSize)')
 
       this.initialized = true
       return true
@@ -145,8 +146,6 @@ export class KeyService {
     try {
       this.koffi = require('koffi')
       this.kernel32 = this.koffi.load('kernel32.dll')
-
-      // 直接使用原生支持的 'void*' 替换 'HANDLE'，绝对不会再报类型错误
       this.OpenProcess = this.kernel32.func('OpenProcess', 'void*', ['uint32', 'bool', 'uint32'])
       this.CloseHandle = this.kernel32.func('CloseHandle', 'bool', ['void*'])
       this.TerminateProcess = this.kernel32.func('TerminateProcess', 'bool', ['void*', 'uint32'])
@@ -638,365 +637,68 @@ export class KeyService {
     return { success: false, error: '获取密钥超时', logs }
   }
 
-  // --- Image Key Stuff (Refactored to Multi-core Crypto Brute Force) ---
-
-  private isAccountDir(dirPath: string): boolean {
-    return (
-        existsSync(join(dirPath, 'db_storage')) ||
-        existsSync(join(dirPath, 'FileStorage', 'Image')) ||
-        existsSync(join(dirPath, 'FileStorage', 'Image2'))
-    )
-  }
-
-  private isPotentialAccountName(name: string): boolean {
-    const lower = name.toLowerCase()
-    if (lower.startsWith('all') || lower.startsWith('applet') || lower.startsWith('backup') || lower.startsWith('wmpf')) return false
-    if (lower.startsWith('wxid_')) return true
-    if (/^\d+$/.test(name) && name.length >= 6) return true
-    return name.length > 5
-  }
-
-  private listAccountDirs(rootDir: string): string[] {
-    try {
-      const entries = readdirSync(rootDir)
-      const high: string[] = []
-      const low: string[] = []
-      for (const entry of entries) {
-        const fullPath = join(rootDir, entry)
-        try {
-          if (!statSync(fullPath).isDirectory()) continue
-        } catch { continue }
-
-        if (!this.isPotentialAccountName(entry)) continue
-
-        if (this.isAccountDir(fullPath)) high.push(fullPath)
-        else low.push(fullPath)
-      }
-      return high.length ? high.sort() : low.sort()
-    } catch {
-      return []
-    }
-  }
-
-  private normalizeExistingDir(inputPath: string): string | null {
-    const trimmed = inputPath.replace(/[\\\\/]+$/, '')
-    if (!existsSync(trimmed)) return null
-    try {
-      const stats = statSync(trimmed)
-      if (stats.isFile()) return dirname(trimmed)
-    } catch {
-      return null
-    }
-    return trimmed
-  }
-
-  private resolveAccountDirFromPath(inputPath: string): string | null {
-    const normalized = this.normalizeExistingDir(inputPath)
-    if (!normalized) return null
-
-    if (this.isAccountDir(normalized)) return normalized
-
-    const lower = normalized.toLowerCase()
-    if (lower.endsWith('db_storage') || lower.endsWith('filestorage') || lower.endsWith('image') || lower.endsWith('image2')) {
-      const parent = dirname(normalized)
-      if (this.isAccountDir(parent)) return parent
-      const grandParent = dirname(parent)
-      if (this.isAccountDir(grandParent)) return grandParent
-    }
-
-    const candidates = this.listAccountDirs(normalized)
-    if (candidates.length) return candidates[0]
-    return null
-  }
-
-  private resolveAccountDir(manualDir?: string): string | null {
-    if (manualDir) {
-      const resolved = this.resolveAccountDirFromPath(manualDir)
-      if (resolved) return resolved
-    }
-
-    const userProfile = process.env.USERPROFILE
-    if (!userProfile) return null
-    const roots = [
-      join(userProfile, 'Documents', 'xwechat_files'),
-      join(userProfile, 'Documents', 'WeChat Files')
-    ]
-    for (const root of roots) {
-      if (!existsSync(root)) continue
-      const candidates = this.listAccountDirs(root)
-      if (candidates.length) return candidates[0]
-    }
-    return null
-  }
-
-  private findTemplateDatFiles(rootDir: string): string[] {
-    const files: string[] = []
-    const stack = [rootDir]
-    const maxFiles = 256
-    while (stack.length && files.length < maxFiles) {
-      const dir = stack.pop() as string
-      let entries: string[]
-      try {
-        entries = readdirSync(dir)
-      } catch { continue }
-      for (const entry of entries) {
-        const fullPath = join(dir, entry)
-        let stats: any
-        try {
-          stats = statSync(fullPath)
-        } catch { continue }
-        if (stats.isDirectory()) {
-          stack.push(fullPath)
-        } else if (entry.endsWith('_t.dat')) {
-          files.push(fullPath)
-          if (files.length >= maxFiles) break
-        }
-      }
-    }
-
-    if (!files.length) return []
-    const dateReg = /(\d{4}-\d{2})/
-    files.sort((a, b) => {
-      const ma = a.match(dateReg)?.[1]
-      const mb = b.match(dateReg)?.[1]
-      if (ma && mb) return mb.localeCompare(ma)
-      return 0
-    })
-    return files.slice(0, 128)
-  }
-
-  private getXorKey(templateFiles: string[]): number | null {
-    const counts = new Map<number, number>()
-    const tailSignatures = [
-      Buffer.from([0xFF, 0xD9]),
-      Buffer.from([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82])
-    ]
-    for (const file of templateFiles) {
-      try {
-        const bytes = readFileSync(file)
-        for (const signature of tailSignatures) {
-          if (bytes.length < signature.length) continue
-          const tail = bytes.subarray(bytes.length - signature.length)
-          const xorKey = tail[0] ^ signature[0]
-          let valid = true
-          for (let i = 1; i < signature.length; i++) {
-            if ((tail[i] ^ xorKey) !== signature[i]) {
-              valid = false
-              break
-            }
-          }
-          if (valid) counts.set(xorKey, (counts.get(xorKey) ?? 0) + 1)
-        }
-      } catch { }
-    }
-    if (!counts.size) return null
-    let bestKey: number | null = null
-    let bestCount = 0
-    for (const [key, count] of counts) {
-      if (count > bestCount) {
-        bestCount = count
-        bestKey = key
-      }
-    }
-    return bestKey
-  }
-
-  // 改为返回 Buffer 数组，收集最多2个样本用于双重校验
-  private getCiphertextsFromTemplate(templateFiles: string[]): Buffer[] {
-    const ciphertexts: Buffer[] = []
-    for (const file of templateFiles) {
-      try {
-        const bytes = readFileSync(file)
-        if (bytes.length < 0x1f) continue
-        // 匹配微信 DAT 文件的特定头部特征
-        if (
-            bytes[0] === 0x07 && bytes[1] === 0x08 && bytes[2] === 0x56 &&
-            bytes[3] === 0x32 && bytes[4] === 0x08 && bytes[5] === 0x07
-        ) {
-          ciphertexts.push(bytes.subarray(0x0f, 0x1f))
-          // 收集到 2 个样本就足够做双重校验了
-          if (ciphertexts.length >= 2) break
-        }
-      } catch { }
-    }
-    return ciphertexts
-  }
-
-  private async bruteForceAesKey(
-      xorKey: number,
-      wxid: string,
-      ciphertexts: Buffer[],
-      onProgress?: (msg: string) => void
-  ): Promise<string | null> {
-    const numCores = os.cpus().length || 4
-    const totalCombinations = 1 << 24 // 16,777,216 种可能性
-    const chunkSize = Math.ceil(totalCombinations / numCores)
-
-    onProgress?.(`准备启动 ${numCores} 个线程进行极速爆破...`)
-
-    const workerCode = `
-      const { parentPort, workerData } = require('worker_threads');
-      const crypto = require('crypto');
-
-      const { start, end, xorKey, wxid, cipherHexList } = workerData;
-      const ciphertexts = cipherHexList.map(hex => Buffer.from(hex, 'hex'));
-
-      function verifyKey(cipher, keyStr) {
-        try {
-          const decipher = crypto.createDecipheriv('aes-128-ecb', keyStr, null);
-          decipher.setAutoPadding(false);
-          const decrypted = Buffer.concat([decipher.update(cipher), decipher.final()]);
-          const isJpeg = decrypted.length >= 3 && decrypted[0] === 0xff && decrypted[1] === 0xd8 && decrypted[2] === 0xff;
-          const isPng = decrypted.length >= 8 && decrypted[0] === 0x89 && decrypted[1] === 0x50 && decrypted[2] === 0x4e && decrypted[3] === 0x47;
-          return isJpeg || isPng;
-        } catch {
-          return false;
-        }
-      }
-
-      let found = null;
-      for (let upper = end - 1; upper >= start; upper--) {
-        // 我就写 -- 
-        if (upper % 100000 === 0 && upper !== start) {
-          parentPort.postMessage({ type: 'progress', scanned: 100000 });
-        }
-
-        const number = (upper * 256) + xorKey; 
-
-        // 1. 无符号整数校验
-        const strUnsigned = number.toString(10) + wxid;
-        const md5Unsigned = crypto.createHash('md5').update(strUnsigned).digest('hex').slice(0, 16);
-        
-        let isValidUnsigned = true;
-        for (const cipher of ciphertexts) {
-          if (!verifyKey(cipher, md5Unsigned)) {
-            isValidUnsigned = false;
-            break;
-          }
-        }
-        if (isValidUnsigned) {
-          found = md5Unsigned;
-          break;
-        }
-
-        // 2. 带符号整数校验 (溢出边界情况)
-        if (number > 0x7FFFFFFF) {
-           const strSigned = (number | 0).toString(10) + wxid;
-           const md5Signed = crypto.createHash('md5').update(strSigned).digest('hex').slice(0, 16);
-           
-           let isValidSigned = true;
-           for (const cipher of ciphertexts) {
-             if (!verifyKey(cipher, md5Signed)) {
-               isValidSigned = false;
-               break;
-             }
-           }
-           if (isValidSigned) {
-             found = md5Signed;
-             break;
-           }
-        }
-      }
-
-      if (found) {
-        parentPort.postMessage({ type: 'success', key: found });
-      } else {
-        parentPort.postMessage({ type: 'done' });
-      }
-    `
-
-    return new Promise((resolve) => {
-      let activeWorkers = numCores
-      let resolved = false
-      let totalScanned = 0 // 总进度计数器
-      const workers: Worker[] = []
-
-      const cleanup = () => {
-        for (const w of workers) w.terminate()
-      }
-
-      for (let i = 0; i < numCores; i++) {
-        const start = i * chunkSize
-        const end = Math.min(start + chunkSize, totalCombinations)
-
-        const worker = new Worker(workerCode, {
-          eval: true,
-          workerData: {
-            start,
-            end,
-            xorKey,
-            wxid,
-            cipherHexList: ciphertexts.map(c => c.toString('hex')) // 传入数组
-          }
-        })
-        workers.push(worker)
-
-        worker.on('message', (msg) => {
-          if (!msg) return
-          if (msg.type === 'progress') {
-            totalScanned += msg.scanned
-            const percent = ((totalScanned / totalCombinations) * 100).toFixed(1)
-            // 优化文案，并确保包含 (xx.x%) 供前端解析
-            onProgress?.(`多核爆破引擎运行中：已扫描 ${(totalScanned / 10000).toFixed(0)} 万个密钥空间 (${percent}%)`)
-          } else if (msg.type === 'success' && !resolved) {
-            resolved = true
-            cleanup()
-            resolve(msg.key)
-          } else if (msg.type === 'done') {
-            // 单个 worker 跑完了没有找到（计数统一在 exit 事件处理）
-          }
-        })
-
-        worker.on('error', (err) => {
-          console.error('Worker error:', err)
-        })
-
-        // 统一在 exit 事件中做完成计数，避免 done/error + exit 双重递减
-        worker.on('exit', () => {
-          activeWorkers--
-          if (activeWorkers === 0 && !resolved) resolve(null)
-        })
-      }
-    })
-  }
+  // --- Image Key (通过 DLL 从缓存目录直接获取) ---
 
   async autoGetImageKey(
       manualDir?: string,
       onProgress?: (message: string) => void
   ): Promise<ImageKeyResult> {
-    onProgress?.('正在定位微信账号数据目录...')
-    const accountDir = this.resolveAccountDir(manualDir)
-    if (!accountDir) return { success: false, error: '未找到微信账号目录' }
+    if (!this.ensureWin32()) return { success: false, error: '仅支持 Windows' }
+    if (!this.ensureLoaded()) return { success: false, error: 'wx_key.dll 未加载' }
 
-    let wxid = basename(accountDir)
-    wxid = wxid.replace(/_[0-9a-fA-F]{4}$/, '')
+    onProgress?.('正在从缓存目录扫描图片密钥...')
 
-    onProgress?.('正在收集并分析加密模板文件...')
-    const templateFiles = this.findTemplateDatFiles(accountDir)
-    if (!templateFiles.length) return { success: false, error: '未找到模板文件' }
+    const resultBuffer = Buffer.alloc(8192)
+    const ok = this.getImageKeyDll(resultBuffer, resultBuffer.length)
 
-    onProgress?.('正在计算特征 XOR 密钥...')
-    const xorKey = this.getXorKey(templateFiles)
-    if (xorKey == null) return { success: false, error: '无法计算 XOR 密钥' }
+    if (!ok) {
+      const errMsg = this.getLastErrorMsg ? this.decodeCString(this.getLastErrorMsg()) : '获取图片密钥失败'
+      return { success: false, error: errMsg }
+    }
 
-    onProgress?.('正在读取加密模板区块...')
-    const ciphertexts = this.getCiphertextsFromTemplate(templateFiles)
-    if (ciphertexts.length < 2) return { success: false, error: '可用的加密样本不足（至少需要2个），请确认账号目录下有足够的模板图片' }
+    const jsonStr = this.decodeUtf8(resultBuffer)
+    let parsed: any
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      return { success: false, error: '解析密钥数据失败' }
+    }
 
-    onProgress?.(`成功提取 ${ciphertexts.length} 个特征样本，准备交叉校验...`)
-    onProgress?.(`准备启动 ${os.cpus().length || 4} 线程并发爆破引擎 (基于 wxid: ${wxid})...`)
-
-    const aesKey = await this.bruteForceAesKey(xorKey, wxid, ciphertexts, (msg) => {
-      onProgress?.(msg)
-    })
-
-    if (!aesKey) {
-      return {
-        success: false,
-        error: 'AES 密钥爆破失败，请确认该账号近期是否有接收过图片，或更换账号目录重试'
+    // 从 manualDir 中提取 wxid 用于精确匹配
+    // 前端传入的格式是 dbPath/wxid_xxx_1234，取最后一段目录名再清理后缀
+    let targetWxid: string | null = null
+    if (manualDir) {
+      const dirName = manualDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+      // 与 DLL 的 CleanWxid 逻辑一致：wxid_a_b_c → wxid_a
+      const parts = dirName.split('_')
+      if (parts.length >= 3 && parts[0] === 'wxid') {
+        targetWxid = `${parts[0]}_${parts[1]}`
+      } else if (dirName.startsWith('wxid_')) {
+        targetWxid = dirName
       }
     }
 
-    return { success: true, xorKey, aesKey }
+    const accounts: any[] = parsed.accounts ?? []
+    if (!accounts.length) {
+      return { success: false, error: '未找到有效的密钥组合' }
+    }
+
+    // 优先匹配 wxid，找不到则回退到第一个
+    const matchedAccount = targetWxid
+      ? (accounts.find((a: any) => a.wxid === targetWxid) ?? accounts[0])
+      : accounts[0]
+
+    if (!matchedAccount?.keys?.length) {
+      return { success: false, error: '未找到有效的密钥组合' }
+    }
+
+    const firstKey = matchedAccount.keys[0]
+    onProgress?.(`密钥获取成功 (wxid: ${matchedAccount.wxid}, code: ${firstKey.code})`)
+
+    return {
+      success: true,
+      xorKey: firstKey.xorKey,
+      aesKey: firstKey.aesKey
+    }
   }
 }

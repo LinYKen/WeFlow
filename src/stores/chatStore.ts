@@ -86,15 +86,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (m.localId && m.localId > 0) return `l:${m.localId}`
       return `t:${m.createTime}:${m.sortSeq || 0}:${m.serverId || 0}`
     }
-    const existingKeys = new Set(state.messages.map(getMsgKey))
+    const currentMessages = state.messages || []
+    const existingKeys = new Set(currentMessages.map(getMsgKey))
     const filtered = newMessages.filter(m => !existingKeys.has(getMsgKey(m)))
 
     if (filtered.length === 0) return state
 
     return {
       messages: prepend
-        ? [...filtered, ...state.messages]
-        : [...state.messages, ...filtered]
+        ? [...filtered, ...currentMessages]
+        : [...currentMessages, ...filtered]
     }
   }),
 

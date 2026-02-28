@@ -1783,13 +1783,19 @@ class ChatService {
     if (!content) return undefined
 
     try {
-      // 提取 md5，这是用于查询 hardlink.db 的值
-      const md5 =
-        this.extractXmlAttribute(content, 'videomsg', 'md5') ||
-        this.extractXmlValue(content, 'md5') ||
-        undefined
+      // 优先取 md5 属性（收到的视频）
+      const md5 = this.extractXmlAttribute(content, 'videomsg', 'md5')
+      if (md5) return md5.toLowerCase()
 
-      return md5?.toLowerCase()
+      // 自己发的视频没有 md5，只有 rawmd5
+      const rawMd5 = this.extractXmlAttribute(content, 'videomsg', 'rawmd5')
+      if (rawMd5) return rawMd5.toLowerCase()
+
+      // 兜底：<md5> 标签
+      const tagMd5 = this.extractXmlValue(content, 'md5')
+      if (tagMd5) return tagMd5.toLowerCase()
+
+      return undefined
     } catch {
       return undefined
     }

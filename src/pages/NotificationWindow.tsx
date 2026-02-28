@@ -1,11 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
 import { NotificationToast, type NotificationData } from '../components/NotificationToast'
-import { useThemeStore } from '../stores/themeStore'
 import '../components/NotificationToast.scss'
 import './NotificationWindow.scss'
 
 export default function NotificationWindow() {
-    const { currentTheme, themeMode } = useThemeStore()
     const [notification, setNotification] = useState<NotificationData | null>(null)
     const [prevNotification, setPrevNotification] = useState<NotificationData | null>(null)
 
@@ -18,12 +16,6 @@ export default function NotificationWindow() {
     // Or just use functional updates, but we need to setPrev(current).
 
     const notificationRef = useRef<NotificationData | null>(null)
-
-    // 应用主题到通知窗口
-    useEffect(() => {
-        document.documentElement.setAttribute('data-theme', currentTheme)
-        document.documentElement.setAttribute('data-mode', themeMode)
-    }, [currentTheme, themeMode])
 
     useEffect(() => {
         notificationRef.current = notification

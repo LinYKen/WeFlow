@@ -774,7 +774,7 @@ function SettingsPage() {
     }
     setIsFetchingImageKey(true);
     setImageKeyPercent(0)
-    setImageKeyStatus('正在初始化多核爆破引擎...');
+    setImageKeyStatus('正在初始化...');
     setImageKeyProgress(0); // 重置进度
 
     try {
@@ -1377,19 +1377,19 @@ function SettingsPage() {
           <Plug size={14} /> {isFetchingImageKey ? '获取中...' : '自动获取图片密钥'}
         </button>
         {isFetchingImageKey ? (
-            <div className="brute-force-progress">
-              <div className="status-header">
-                <span className="status-text">{imageKeyStatus || '正在启动多核爆破引擎...'}</span>
-                {imageKeyPercent !== null && <span className="percent">{imageKeyPercent.toFixed(1)}%</span>}
-              </div>
-              {imageKeyPercent !== null && (
-                  <div className="progress-bar-container">
-                    <div className="fill" style={{ width: `${imageKeyPercent}%` }}></div>
-                  </div>
-              )}
+          <div className="brute-force-progress">
+            <div className="status-header">
+              <span className="status-text">{imageKeyStatus || '正在启动...'}</span>
+              {imageKeyPercent !== null && <span className="percent">{imageKeyPercent.toFixed(1)}%</span>}
             </div>
+            {imageKeyPercent !== null && (
+              <div className="progress-bar-container">
+                <div className="fill" style={{ width: `${imageKeyPercent}%` }}></div>
+              </div>
+            )}
+          </div>
         ) : (
-            imageKeyStatus && <div className="form-hint status-text" style={{ marginTop: '8px' }}>{imageKeyStatus}</div>
+          imageKeyStatus && <div className="form-hint status-text" style={{ marginTop: '8px' }}>{imageKeyStatus}</div>
         )}
       </div>
 
@@ -2113,8 +2113,8 @@ function SettingsPage() {
             <label>应用锁状态</label>
             <span className="form-hint">{
               isLockMode ? '已开启' :
-              authEnabled ? '旧版模式 — 请重新设置密码以升级为新模式提高安全性' :
-              '未开启 — 请设置密码以开启'
+                authEnabled ? '旧版模式 — 请重新设置密码以升级为新模式提高安全性' :
+                  '未开启 — 请设置密码以开启'
             }</span>
           </div>
           {authEnabled && !showDisableLockInput && (

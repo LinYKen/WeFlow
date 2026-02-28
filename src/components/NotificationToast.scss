@@ -48,18 +48,26 @@
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
 
-        // 确保背景完全不透明（通知是独立窗口，透明背景会穿透）
-        background: var(--bg-secondary-solid, var(--bg-secondary, #2c2c2c));
-        color: var(--text-primary, #ffffff);
+        // 独立通知窗口：默认使用浅色模式硬编码值，确保不依赖 <html> 上的主题属性
+        background: #ffffff;
+        color: #3d3d3d;
+        --text-primary: #3d3d3d;
+        --text-secondary: #666666;
+        --text-tertiary: #999999;
+        --border-light: rgba(0, 0, 0, 0.08);
 
-        // 浅色模式强制完全不透明白色背景
-        [data-mode="light"] &,
-        :not([data-mode]) & {
-            background: #ffffff !important;
+        // 深色模式覆盖
+        [data-mode="dark"] & {
+            background: var(--bg-secondary-solid, #282420);
+            color: var(--text-primary, #F0EEE9);
+            --text-primary: #F0EEE9;
+            --text-secondary: #b3b0aa;
+            --text-tertiary: #807d78;
+            --border-light: rgba(255, 255, 255, 0.1);
         }
 
         box-shadow: none !important; // NO SHADOW
-        border: 1px solid var(--border-light, rgba(255, 255, 255, 0.1));
+        border: 1px solid var(--border-light);
 
         display: flex;
         padding: 16px;

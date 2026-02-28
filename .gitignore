@@ -56,6 +56,7 @@ Thumbs.db
 *.aps
 
 wcdb/
+xkey/
 *info
 概述.md
 chatlab-format.md

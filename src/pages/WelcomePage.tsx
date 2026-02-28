@@ -746,52 +746,52 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
             )}
 
             {currentStep.id === 'image' && (
-                <div className="form-group">
-                  <div className="grid-2">
-                    <div>
-                      <label className="field-label">图片 XOR 密钥</label>
-                      <input
-                          type="text"
-                          className="field-input"
-                          placeholder="0x..."
-                          value={imageXorKey}
-                          onChange={(e) => setImageXorKey(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="field-label">图片 AES 密钥</label>
-                      <input
-                          type="text"
-                          className="field-input"
-                          placeholder="16位密钥"
-                          value={imageAesKey}
-                          onChange={(e) => setImageAesKey(e.target.value)}
-                      />
-                    </div>
+              <div className="form-group">
+                <div className="grid-2">
+                  <div>
+                    <label className="field-label">图片 XOR 密钥</label>
+                    <input
+                      type="text"
+                      className="field-input"
+                      placeholder="0x..."
+                      value={imageXorKey}
+                      onChange={(e) => setImageXorKey(e.target.value)}
+                    />
                   </div>
-
-                  <button className="btn btn-secondary btn-block mt-4" onClick={handleAutoGetImageKey} disabled={isFetchingImageKey}>
-                    {isFetchingImageKey ? '获取中...' : '自动获取图片密钥'}
-                  </button>
-
-                  {isFetchingImageKey ? (
-                      <div className="brute-force-progress">
-                        <div className="status-header">
-                          <span className="status-text">{imageKeyStatus || '正在启动多核爆破引擎...'}</span>
-                          {imageKeyPercent !== null && <span className="percent">{imageKeyPercent.toFixed(1)}%</span>}
-                        </div>
-                        {imageKeyPercent !== null && (
-                            <div className="progress-bar-container">
-                              <div className="fill" style={{ width: `${imageKeyPercent}%` }}></div>
-                            </div>
-                        )}
-                      </div>
-                  ) : (
-                      imageKeyStatus && <div className="status-message" style={{ marginTop: '12px' }}>{imageKeyStatus}</div>
-                  )}
-
-                  <div className="field-hint">请在微信中打开几张图片后再点击获取</div>
+                  <div>
+                    <label className="field-label">图片 AES 密钥</label>
+                    <input
+                      type="text"
+                      className="field-input"
+                      placeholder="16位密钥"
+                      value={imageAesKey}
+                      onChange={(e) => setImageAesKey(e.target.value)}
+                    />
+                  </div>
                 </div>
+
+                <button className="btn btn-secondary btn-block mt-4" onClick={handleAutoGetImageKey} disabled={isFetchingImageKey}>
+                  {isFetchingImageKey ? '获取中...' : '自动获取图片密钥'}
+                </button>
+
+                {isFetchingImageKey ? (
+                  <div className="brute-force-progress">
+                    <div className="status-header">
+                      <span className="status-text">{imageKeyStatus || '正在启动...'}</span>
+                      {imageKeyPercent !== null && <span className="percent">{imageKeyPercent.toFixed(1)}%</span>}
+                    </div>
+                    {imageKeyPercent !== null && (
+                      <div className="progress-bar-container">
+                        <div className="fill" style={{ width: `${imageKeyPercent}%` }}></div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  imageKeyStatus && <div className="status-message" style={{ marginTop: '12px' }}>{imageKeyStatus}</div>
+                )}
+
+                <div className="field-hint">请在微信中打开几张图片后再点击获取</div>
+              </div>
             )}
           </div>
 

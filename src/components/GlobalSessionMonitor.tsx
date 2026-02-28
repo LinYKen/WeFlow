@@ -257,7 +257,8 @@ export function GlobalSessionMonitor() {
     const handleActiveSessionRefresh = async (sessionId: string) => {
         // 从 ChatPage 复制/调整的逻辑，以保持集中
         const state = useChatStore.getState()
-        const lastMsg = state.messages[state.messages.length - 1]
+        const msgs = state.messages || []
+        const lastMsg = msgs[msgs.length - 1]
         const minTime = lastMsg?.createTime || 0
 
         try {

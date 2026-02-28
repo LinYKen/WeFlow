@@ -235,9 +235,23 @@ class VideoService {
                 const videoPath = join(dirPath, `${realVideoMd5}.mp4`)
 
                 if (existsSync(videoPath)) {
-                    this.log('找到视频', { videoPath })
-                    const coverPath = join(dirPath, `${realVideoMd5}.jpg`)
-                    const thumbPath = join(dirPath, `${realVideoMd5}_thumb.jpg`)
+                    // 封面/缩略图使用不带 _raw 后缀的基础名（自己发的视频文件名带 _raw，但封面不带）
+                    const baseMd5 = realVideoMd5.replace(/_raw$/, '')
+                    const coverPath = join(dirPath, `${baseMd5}.jpg`)
+                    const thumbPath = join(dirPath, `${baseMd5}_thumb.jpg`)
+
+                    // 列出同目录下与该 md5 相关的所有文件，帮助排查封面命名
+                    const allFiles = readdirSync(dirPath)
+                    const relatedFiles = allFiles.filter(f => f.toLowerCase().startsWith(realVideoMd5.slice(0, 8).toLowerCase()))
+                    this.log('找到视频，相关文件列表', {
+                        videoPath,
+                        coverExists: existsSync(coverPath),
+                        thumbExists: existsSync(thumbPath),
+                        relatedFiles,
+                        coverPath,
+                        thumbPath
+                    })
+
                     return {
                         videoUrl: videoPath,
                         coverUrl: this.fileToDataUrl(coverPath, 'image/jpeg'),
@@ -247,11 +261,28 @@ class VideoService {
                 }
             }
 
-            // 没找到，列出第一个目录里的文件帮助排查
-            if (yearMonthDirs.length > 0) {
-                const firstDir = join(videoBaseDir, yearMonthDirs[0])
-                const files = readdirSync(firstDir).filter(f => f.endsWith('.mp4')).slice(0, 5)
-                this.log('未找到视频，最新目录样本', { dir: yearMonthDirs[0], sampleFiles: files, lookingFor: `${realVideoMd5}.mp4` })
+            // 没找到，列出所有目录里的 mp4 文件帮助排查（最多每目录 10 个）
+            this.log('未找到视频，开始全目录扫描', {
+                lookingForOriginal: `${videoMd5}.mp4`,
+                lookingForResolved: `${realVideoMd5}.mp4`,
+                hardlinkResolved: realVideoMd5 !== videoMd5
+            })
+            for (const yearMonth of yearMonthDirs) {
+                const dirPath = join(videoBaseDir, yearMonth)
+                try {
+                    const allFiles = readdirSync(dirPath)
+                    const mp4Files = allFiles.filter(f => f.endsWith('.mp4')).slice(0, 10)
+                    // 检查原始 md5 是否部分匹配（前8位）
+                    const partialMatch = mp4Files.filter(f => f.toLowerCase().startsWith(videoMd5.slice(0, 8).toLowerCase()))
+                    this.log(`目录 ${yearMonth} 扫描结果`, {
+                        totalFiles: allFiles.length,
+                        mp4Count: allFiles.filter(f => f.endsWith('.mp4')).length,
+                        sampleMp4: mp4Files,
+                        partialMatchByOriginalMd5: partialMatch
+                    })
+                } catch (e) {
+                    this.log(`目录 ${yearMonth} 读取失败`, { error: String(e) })
+                }
             }
         } catch (e) {
             this.log('getVideoInfo 遍历出错', { error: String(e) })
@@ -265,41 +296,59 @@ class VideoService {
      * 根据消息内容解析视频MD5
      */
     parseVideoMd5(content: string): string | undefined {
-
-        // 打印前500字符看看 XML 结构
-
         if (!content) return undefined
 
+        // 打印原始 XML 前 800 字符，帮助排查自己发的视频结构
+        this.log('parseVideoMd5 原始内容', { preview: content.slice(0, 800) })
+
         try {
-            // 提取所有可能的 md5 值进行日志
-            const allMd5s: string[] = []
-            const md5Regex = /(?:md5|rawmd5|newmd5|originsourcemd5)\s*=\s*['"]([a-fA-F0-9]+)['"]/gi
+            // 收集所有 md5 相关属性，方便对比
+            const allMd5Attrs: string[] = []
+            const md5Regex = /(?:md5|rawmd5|newmd5|originsourcemd5)\s*=\s*['"]([a-fA-F0-9]*)['"]/gi
             let match
             while ((match = md5Regex.exec(content)) !== null) {
-                allMd5s.push(`${match[0]}`)
+                allMd5Attrs.push(match[0])
+            }
+            this.log('parseVideoMd5 所有 md5 属性', { attrs: allMd5Attrs })
+
+            // 方法1：从 <videomsg md5="..."> 提取（收到的视频）
+            const videoMsgMd5Match = /<videomsg[^>]*\smd5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
+            if (videoMsgMd5Match) {
+                this.log('parseVideoMd5 命中 videomsg md5 属性', { md5: videoMsgMd5Match[1] })
+                return videoMsgMd5Match[1].toLowerCase()
             }
 
-            // 提取 md5（用于查询 hardlink.db）
-            // 注意：不是 rawmd5，rawmd5 是另一个值
-            // 格式: md5="xxx" 或 <md5>xxx</md5>
-
-            // 尝试从videomsg标签中提取md5
-            const videoMsgMatch = /<videomsg[^>]*\smd5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
-            if (videoMsgMatch) {
-                return videoMsgMatch[1].toLowerCase()
+            // 方法2：从 <videomsg rawmd5="..."> 提取（自己发的视频，没有 md5 只有 rawmd5）
+            const rawMd5Match = /<videomsg[^>]*\srawmd5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
+            if (rawMd5Match) {
+                this.log('parseVideoMd5 命中 videomsg rawmd5 属性（自发视频）', { rawmd5: rawMd5Match[1] })
+                return rawMd5Match[1].toLowerCase()
             }
 
-            const attrMatch = /\smd5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
+            // 方法3：任意属性 md5="..."（非 rawmd5/cdnthumbaeskey 等）
+            const attrMatch = /(?<![a-z])md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
             if (attrMatch) {
+                this.log('parseVideoMd5 命中通用 md5 属性', { md5: attrMatch[1] })
                 return attrMatch[1].toLowerCase()
             }
 
-            const md5Match = /<md5>([a-fA-F0-9]+)<\/md5>/i.exec(content)
-            if (md5Match) {
-                return md5Match[1].toLowerCase()
+            // 方法4：<md5>...</md5> 标签
+            const md5TagMatch = /<md5>([a-fA-F0-9]+)<\/md5>/i.exec(content)
+            if (md5TagMatch) {
+                this.log('parseVideoMd5 命中 md5 标签', { md5: md5TagMatch[1] })
+                return md5TagMatch[1].toLowerCase()
             }
+
+            // 方法5：兜底取 rawmd5 属性（任意位置）
+            const rawMd5Fallback = /\srawmd5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
+            if (rawMd5Fallback) {
+                this.log('parseVideoMd5 兜底命中 rawmd5', { rawmd5: rawMd5Fallback[1] })
+                return rawMd5Fallback[1].toLowerCase()
+            }
+
+            this.log('parseVideoMd5 未提取到任何 md5', { contentLength: content.length })
         } catch (e) {
-            console.error('[VideoService] 解析视频MD5失败:', e)
+            this.log('parseVideoMd5 异常', { error: String(e) })
         }
 
         return undefined
