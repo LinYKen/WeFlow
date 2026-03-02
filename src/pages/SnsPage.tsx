@@ -360,7 +360,7 @@ export default function SnsPage() {
 
     return (
         <div className="sns-page-layout">
-            <div className="sns-main-viewport" onScroll={handleScroll} onWheel={handleWheel} ref={postsContainerRef}>
+            <div className="sns-main-viewport">
                 <div className="sns-feed-container">
                     <div className="feed-header">
                         <div className="feed-header-main">
@@ -417,78 +417,80 @@ export default function SnsPage() {
                         </div>
                     </div>
 
-                    {loadingNewer && (
-                        <div className="status-indicator loading-newer">
-                            <RefreshCw size={16} className="spinning" />
-                            <span>正在检查更新的动态...</span>
-                        </div>
-                    )}
-
-                    {!loadingNewer && hasNewer && (
-                        <div className="status-indicator newer-hint" onClick={() => loadPosts({ direction: 'newer' })}>
-                            有新动态，点击查看
-                        </div>
-                    )}
-
-                    <div className="posts-list">
-                        {posts.map(post => (
-                            <SnsPostItem
-                                key={post.id}
-                                post={{ ...post, isProtected: triggerInstalled === true }}
-                                onPreview={(src, isVideo, liveVideoPath) => {
-                                    if (isVideo) {
-                                        void window.electronAPI.window.openVideoPlayerWindow(src)
-                                    } else {
-                                        void window.electronAPI.window.openImageViewerWindow(src, liveVideoPath || undefined)
-                                    }
-                                }}
-                                onDebug={(p) => setDebugPost(p)}
-                                onDelete={(postId) => {
-                                    setPosts(prev => prev.filter(p => p.id !== postId))
-                                    loadOverviewStats()
-                                }}
-                            />
-                        ))}
-                    </div>
-
-                    {loading && posts.length === 0 && (
-                        <div className="initial-loading">
-                            <div className="loading-pulse">
-                                <div className="pulse-circle"></div>
-                                <span>正在加载朋友圈...</span>
+                    <div className="sns-posts-scroll" onScroll={handleScroll} onWheel={handleWheel} ref={postsContainerRef}>
+                        {loadingNewer && (
+                            <div className="status-indicator loading-newer">
+                                <RefreshCw size={16} className="spinning" />
+                                <span>正在检查更新的动态...</span>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {loading && posts.length > 0 && (
-                        <div className="status-indicator loading-more">
-                            <RefreshCw size={16} className="spinning" />
-                            <span>正在加载更多...</span>
-                        </div>
-                    )}
+                        {!loadingNewer && hasNewer && (
+                            <div className="status-indicator newer-hint" onClick={() => loadPosts({ direction: 'newer' })}>
+                                有新动态，点击查看
+                            </div>
+                        )}
 
-                    {!hasMore && posts.length > 0 && (
-                        <div className="status-indicator no-more">{
-                            selectedUsernames.length === 1 &&
-                            contacts.find(c => c.username === selectedUsernames[0])?.type === 'former_friend'
-                                ? '在时间的长河里刻舟求剑'
-                                : '或许过往已无可溯洄，但好在还有可以与你相遇的明天'
-                        }</div>
-                    )}
-
-                    {!loading && posts.length === 0 && (
-                        <div className="no-results">
-                            <div className="no-results-icon"><Search size={48} /></div>
-                            <p>未找到相关动态</p>
-                            {(selectedUsernames.length > 0 || searchKeyword || jumpTargetDate) && (
-                                <button onClick={() => {
-                                    setSearchKeyword(''); setSelectedUsernames([]); setJumpTargetDate(undefined);
-                                }} className="reset-inline">
-                                    重置筛选条件
-                                </button>
-                            )}
+                        <div className="posts-list">
+                            {posts.map(post => (
+                                <SnsPostItem
+                                    key={post.id}
+                                    post={{ ...post, isProtected: triggerInstalled === true }}
+                                    onPreview={(src, isVideo, liveVideoPath) => {
+                                        if (isVideo) {
+                                            void window.electronAPI.window.openVideoPlayerWindow(src)
+                                        } else {
+                                            void window.electronAPI.window.openImageViewerWindow(src, liveVideoPath || undefined)
+                                        }
+                                    }}
+                                    onDebug={(p) => setDebugPost(p)}
+                                    onDelete={(postId) => {
+                                        setPosts(prev => prev.filter(p => p.id !== postId))
+                                        loadOverviewStats()
+                                    }}
+                                />
+                            ))}
                         </div>
-                    )}
+
+                        {loading && posts.length === 0 && (
+                            <div className="initial-loading">
+                                <div className="loading-pulse">
+                                    <div className="pulse-circle"></div>
+                                    <span>正在加载朋友圈...</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {loading && posts.length > 0 && (
+                            <div className="status-indicator loading-more">
+                                <RefreshCw size={16} className="spinning" />
+                                <span>正在加载更多...</span>
+                            </div>
+                        )}
+
+                        {!hasMore && posts.length > 0 && (
+                            <div className="status-indicator no-more">{
+                                selectedUsernames.length === 1 &&
+                                contacts.find(c => c.username === selectedUsernames[0])?.type === 'former_friend'
+                                    ? '在时间的长河里刻舟求剑'
+                                    : '或许过往已无可溯洄，但好在还有可以与你相遇的明天'
+                            }</div>
+                        )}
+
+                        {!loading && posts.length === 0 && (
+                            <div className="no-results">
+                                <div className="no-results-icon"><Search size={48} /></div>
+                                <p>未找到相关动态</p>
+                                {(selectedUsernames.length > 0 || searchKeyword || jumpTargetDate) && (
+                                    <button onClick={() => {
+                                        setSearchKeyword(''); setSelectedUsernames([]); setJumpTargetDate(undefined);
+                                    }} className="reset-inline">
+                                        重置筛选条件
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 

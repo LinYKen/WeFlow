@@ -23,7 +23,7 @@
    ========================================= */
 .sns-main-viewport {
     flex: 1;
-    overflow-y: scroll;
+    overflow: hidden;
     position: relative;
     display: flex;
     justify-content: center;
@@ -35,7 +35,9 @@
     padding: 20px 24px 60px 24px;
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 0;
+    min-height: 0;
+    height: 100%;
 }
 
 .feed-header {
@@ -44,9 +46,7 @@
     justify-content: space-between;
     margin-bottom: 8px;
     padding: 0 4px;
-    position: sticky;
-    top: 0;
-    z-index: 20;
+    z-index: 2;
     background: var(--sns-bg-color);
     border-bottom: 1px solid var(--border-color);
     padding-top: 10px;
@@ -107,6 +107,13 @@
             animation: spin 0.8s linear infinite;
         }
     }
+}
+
+.sns-posts-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 16px;
 }
 
 .posts-list {
