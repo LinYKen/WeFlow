@@ -2776,9 +2776,17 @@ function ExportPage() {
     return '公众号'
   }, [activeTab])
 
+  const sessionRowByUsername = useMemo(() => {
+    const map = new Map<string, SessionRow>()
+    for (const session of sessions) {
+      map.set(session.username, session)
+    }
+    return map
+  }, [sessions])
+
   const filteredContacts = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase()
-    return contactsList
+    const contacts = contactsList
       .filter((contact) => {
         if (!matchesContactTab(contact, activeTab)) return false
         if (!keyword) return true
@@ -2788,16 +2796,35 @@ function ExportPage() {
           contact.username.toLowerCase().includes(keyword)
         )
       })
-      .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username, 'zh-Hans-CN'))
-  }, [contactsList, activeTab, searchKeyword])
 
-  const sessionRowByUsername = useMemo(() => {
-    const map = new Map<string, SessionRow>()
-    for (const session of sessions) {
-      map.set(session.username, session)
-    }
-    return map
-  }, [sessions])
+    const indexedContacts = contacts.map((contact, index) => ({
+      contact,
+      index,
+      count: (() => {
+        const counted = normalizeMessageCount(sessionMessageCounts[contact.username])
+        if (typeof counted === 'number') return counted
+        const hinted = normalizeMessageCount(sessionRowByUsername.get(contact.username)?.messageCountHint)
+        return hinted
+      })()
+    }))
+
+    indexedContacts.sort((a, b) => {
+      const aHasCount = typeof a.count === 'number'
+      const bHasCount = typeof b.count === 'number'
+      if (aHasCount && bHasCount) {
+        const diff = (b.count as number) - (a.count as number)
+        if (diff !== 0) return diff
+      } else if (aHasCount) {
+        return -1
+      } else if (bHasCount) {
+        return 1
+      }
+      // 无统计值或同分时保持原顺序，避免列表频繁跳动。
+      return a.index - b.index
+    })
+
+    return indexedContacts.map(item => item.contact)
+  }, [contactsList, activeTab, searchKeyword, sessionMessageCounts, sessionRowByUsername])
 
   const contactByUsername = useMemo(() => {
     const map = new Map<string, ContactInfo>()
