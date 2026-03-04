@@ -801,6 +801,182 @@ const WriteLayoutSelector = memo(function WriteLayoutSelector({
   )
 })
 
+interface TaskCenterModalProps {
+  isOpen: boolean
+  tasks: ExportTask[]
+  taskRunningCount: number
+  taskQueuedCount: number
+  expandedPerfTaskId: string | null
+  nowTick: number
+  onClose: () => void
+  onTogglePerfTask: (taskId: string) => void
+}
+
+const TaskCenterModal = memo(function TaskCenterModal({
+  isOpen,
+  tasks,
+  taskRunningCount,
+  taskQueuedCount,
+  expandedPerfTaskId,
+  nowTick,
+  onClose,
+  onTogglePerfTask
+}: TaskCenterModalProps) {
+  if (!isOpen) return null
+
+  return (
+    <div
+      className="task-center-modal-overlay"
+      onClick={onClose}
+    >
+      <div
+        className="task-center-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="任务中心"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="task-center-modal-header">
+          <div className="task-center-modal-title">
+            <h3>任务中心</h3>
+            <span>进行中 {taskRunningCount} · 排队 {taskQueuedCount} · 总计 {tasks.length}</span>
+          </div>
+          <button
+            className="close-icon-btn"
+            type="button"
+            onClick={onClose}
+            aria-label="关闭任务中心"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="task-center-modal-body">
+          {tasks.length === 0 ? (
+            <div className="task-empty">暂无任务。点击会话导出或卡片导出后会在这里创建任务。</div>
+          ) : (
+            <div className="task-list">
+              {tasks.map(task => {
+                const canShowPerfDetail = isTextBatchTask(task) && Boolean(task.performance)
+                const isPerfExpanded = expandedPerfTaskId === task.id
+                const stageTotals = canShowPerfDetail
+                  ? getTaskPerformanceStageTotals(task.performance, nowTick)
+                  : null
+                const stageTotalMs = stageTotals
+                  ? stageTotals.collect + stageTotals.build + stageTotals.write + stageTotals.other
+                  : 0
+                const topSessions = isPerfExpanded
+                  ? getTaskPerformanceTopSessions(task.performance, nowTick, 5)
+                  : []
+                const normalizedProgressTotal = task.progress.total > 0 ? task.progress.total : 0
+                const normalizedProgressCurrent = normalizedProgressTotal > 0
+                  ? Math.max(0, Math.min(normalizedProgressTotal, task.progress.current))
+                  : 0
+                const currentSessionRatio = task.progress.phaseTotal > 0
+                  ? Math.max(0, Math.min(1, task.progress.phaseProgress / task.progress.phaseTotal))
+                  : null
+                return (
+                  <div key={task.id} className={`task-card ${task.status}`}>
+                    <div className="task-main">
+                      <div className="task-title">{task.title}</div>
+                      <div className="task-meta">
+                        <span className={`task-status ${task.status}`}>{getTaskStatusLabel(task)}</span>
+                        <span>{new Date(task.createdAt).toLocaleString('zh-CN')}</span>
+                      </div>
+                      {task.status === 'running' && (
+                        <>
+                          <div className="task-progress-bar">
+                            <div
+                              className="task-progress-fill"
+                              style={{ width: `${normalizedProgressTotal > 0 ? (normalizedProgressCurrent / normalizedProgressTotal) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <div className="task-progress-text">
+                            {normalizedProgressTotal > 0
+                              ? `${Math.floor(normalizedProgressCurrent)} / ${normalizedProgressTotal}`
+                              : '处理中'}
+                            {task.status === 'running' && currentSessionRatio !== null
+                              ? `（当前会话 ${Math.round(currentSessionRatio * 100)}%）`
+                              : ''}
+                            {task.progress.phaseLabel ? ` · ${task.progress.phaseLabel}` : ''}
+                          </div>
+                        </>
+                      )}
+                      {canShowPerfDetail && stageTotals && (
+                        <div className="task-perf-summary">
+                          <span>累计耗时 {formatDurationMs(stageTotalMs)}</span>
+                          {task.progress.total > 0 && (
+                            <span>平均/会话 {formatDurationMs(Math.floor(stageTotalMs / Math.max(1, task.progress.total)))}</span>
+                          )}
+                        </div>
+                      )}
+                      {canShowPerfDetail && isPerfExpanded && stageTotals && (
+                        <div className="task-perf-panel">
+                          <div className="task-perf-title">阶段耗时分布</div>
+                          {[
+                            { key: 'collect' as const, label: '收集消息' },
+                            { key: 'build' as const, label: '构建消息' },
+                            { key: 'write' as const, label: '写入文件' },
+                            { key: 'other' as const, label: '其他' }
+                          ].map(item => {
+                            const value = stageTotals[item.key]
+                            const ratio = stageTotalMs > 0 ? Math.min(100, (value / stageTotalMs) * 100) : 0
+                            return (
+                              <div className="task-perf-row" key={item.key}>
+                                <div className="task-perf-row-head">
+                                  <span>{item.label}</span>
+                                  <span>{formatDurationMs(value)}</span>
+                                </div>
+                                <div className="task-perf-row-track">
+                                  <div className="task-perf-row-fill" style={{ width: `${ratio}%` }} />
+                                </div>
+                              </div>
+                            )
+                          })}
+                          <div className="task-perf-title">最慢会话 Top5</div>
+                          {topSessions.length === 0 ? (
+                            <div className="task-perf-empty">暂无会话耗时数据</div>
+                          ) : (
+                            <div className="task-perf-session-list">
+                              {topSessions.map((session, index) => (
+                                <div className="task-perf-session-item" key={session.sessionId}>
+                                  <span className="task-perf-session-rank">
+                                    {index + 1}. {session.sessionName || session.sessionId}
+                                    {!session.finishedAt ? '（进行中）' : ''}
+                                  </span>
+                                  <span className="task-perf-session-time">{formatDurationMs(session.liveElapsedMs)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {task.status === 'error' && <div className="task-error">{task.error || '任务失败'}</div>}
+                    </div>
+                    <div className="task-actions">
+                      {canShowPerfDetail && (
+                        <button
+                          className={`task-action-btn ${isPerfExpanded ? 'primary' : ''}`}
+                          type="button"
+                          onClick={() => onTogglePerfTask(task.id)}
+                        >
+                          {isPerfExpanded ? '收起详情' : '性能详情'}
+                        </button>
+                      )}
+                      <button className="task-action-btn" onClick={() => task.payload.outputDir && void window.electronAPI.shell.openPath(task.payload.outputDir)}>
+                        <FolderOpen size={14} /> 目录
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
 function ExportPage() {
   const location = useLocation()
   const isExportRoute = location.pathname === '/export'
@@ -2480,7 +2656,7 @@ function ExportPage() {
     await configService.setExportDefaultConcurrency(options.exportConcurrency)
   }
 
-  const openSingleExport = (session: SessionRow) => {
+  const openSingleExport = useCallback((session: SessionRow) => {
     if (!session.hasSession) return
     openExportDialog({
       scope: 'single',
@@ -2488,7 +2664,7 @@ function ExportPage() {
       sessionNames: [session.displayName || session.username],
       title: `导出会话：${session.displayName || session.username}`
     })
-  }
+  }, [openExportDialog])
 
   const resolveSessionExistingMessageCount = useCallback((session: SessionRow): number => {
     const counted = normalizeMessageCount(sessionMessageCounts[session.username])
@@ -3314,6 +3490,111 @@ function ExportPage() {
   const taskRunningCount = tasks.filter(task => task.status === 'running').length
   const taskQueuedCount = tasks.filter(task => task.status === 'queued').length
   const showInitialSkeleton = isLoading && sessions.length === 0
+  const closeTaskCenter = useCallback(() => {
+    setIsTaskCenterOpen(false)
+    setExpandedPerfTaskId(null)
+  }, [])
+  const toggleTaskPerfDetail = useCallback((taskId: string) => {
+    setExpandedPerfTaskId(prev => (prev === taskId ? null : taskId))
+  }, [])
+  const contactsListRows = useMemo(() => (
+    filteredContacts.map((contact) => {
+      const matchedSession = sessionRowByUsername.get(contact.username)
+      const canExport = Boolean(matchedSession?.hasSession)
+      const isRunning = canExport && runningSessionIds.has(contact.username)
+      const isQueued = canExport && queuedSessionIds.has(contact.username)
+      const recent = canExport ? formatRecentExportTime(lastExportBySession[contact.username], nowTick) : ''
+      const countedMessages = normalizeMessageCount(sessionMessageCounts[contact.username])
+      const hintedMessages = normalizeMessageCount(matchedSession?.messageCountHint)
+      const displayedMessageCount = countedMessages ?? hintedMessages
+      const messageCountLabel = !canExport
+        ? '--'
+        : typeof displayedMessageCount === 'number'
+          ? displayedMessageCount.toLocaleString('zh-CN')
+          : (isLoadingSessionCounts ? '统计中…' : '--')
+      return (
+        <div
+          key={contact.username}
+          className="contact-row"
+        >
+          <div className="contact-item">
+            <div className="contact-avatar">
+              {contact.avatarUrl ? (
+                <img src={contact.avatarUrl} alt="" loading="lazy" />
+              ) : (
+                <span>{getAvatarLetter(contact.displayName)}</span>
+              )}
+            </div>
+            <div className="contact-info">
+              <div className="contact-name">{contact.displayName}</div>
+              <div className="contact-remark">{contact.username}</div>
+            </div>
+            <div className="row-message-count">
+              <div className="row-message-stats">
+                <strong className={`row-message-count-value ${typeof displayedMessageCount === 'number' ? '' : 'muted'}`}>
+                  {messageCountLabel}
+                </strong>
+              </div>
+            </div>
+            <div className="row-action-cell">
+              <div className="row-action-main">
+                <button
+                  className="row-open-chat-btn"
+                  disabled={!canExport}
+                  title={canExport ? '在新窗口打开该会话' : '该联系人暂无会话记录'}
+                  onClick={() => {
+                    if (!canExport) return
+                    void window.electronAPI.window.openSessionChatWindow(contact.username)
+                  }}
+                >
+                  <ExternalLink size={13} />
+                  打开对话
+                </button>
+                <button
+                  className={`row-detail-btn ${showSessionDetailPanel && sessionDetail?.wxid === contact.username ? 'active' : ''}`}
+                  onClick={() => openSessionDetail(contact.username)}
+                >
+                  详情
+                </button>
+                <button
+                  className={`row-export-btn ${isRunning ? 'running' : ''} ${!canExport ? 'no-session' : ''}`}
+                  disabled={!canExport || isRunning}
+                  onClick={() => {
+                    if (!matchedSession || !matchedSession.hasSession) return
+                    openSingleExport({
+                      ...matchedSession,
+                      displayName: contact.displayName || matchedSession.displayName || matchedSession.username
+                    })
+                  }}
+                >
+                  {isRunning ? (
+                    <>
+                      <Loader2 size={14} className="spin" />
+                      导出中
+                    </>
+                  ) : !canExport ? '暂无会话' : isQueued ? '排队中' : '单会话导出'}
+                </button>
+              </div>
+              {recent && <span className="row-export-time">{recent}</span>}
+            </div>
+          </div>
+        </div>
+      )
+    })
+  ), [
+    filteredContacts,
+    isLoadingSessionCounts,
+    lastExportBySession,
+    nowTick,
+    openSessionDetail,
+    openSingleExport,
+    queuedSessionIds,
+    runningSessionIds,
+    sessionDetail?.wxid,
+    sessionMessageCounts,
+    sessionRowByUsername,
+    showSessionDetailPanel
+  ])
   const chooseExportFolder = useCallback(async () => {
     const result = await window.electronAPI.dialog.openFile({
       title: '选择导出目录',
@@ -3381,163 +3662,16 @@ function ExportPage() {
         </div>
       </div>
 
-      {isTaskCenterOpen && (
-        <div
-          className="task-center-modal-overlay"
-          onClick={() => {
-            setIsTaskCenterOpen(false)
-            setExpandedPerfTaskId(null)
-          }}
-        >
-          <div
-            className="task-center-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="任务中心"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="task-center-modal-header">
-              <div className="task-center-modal-title">
-                <h3>任务中心</h3>
-                <span>进行中 {taskRunningCount} · 排队 {taskQueuedCount} · 总计 {tasks.length}</span>
-              </div>
-              <button
-                className="close-icon-btn"
-                type="button"
-                onClick={() => {
-                  setIsTaskCenterOpen(false)
-                  setExpandedPerfTaskId(null)
-                }}
-                aria-label="关闭任务中心"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="task-center-modal-body">
-              {tasks.length === 0 ? (
-                <div className="task-empty">暂无任务。点击会话导出或卡片导出后会在这里创建任务。</div>
-              ) : (
-                <div className="task-list">
-                  {tasks.map(task => {
-                    const canShowPerfDetail = isTextBatchTask(task) && Boolean(task.performance)
-                    const isPerfExpanded = expandedPerfTaskId === task.id
-                    const stageTotals = canShowPerfDetail
-                      ? getTaskPerformanceStageTotals(task.performance, nowTick)
-                      : null
-                    const stageTotalMs = stageTotals
-                      ? stageTotals.collect + stageTotals.build + stageTotals.write + stageTotals.other
-                      : 0
-                    const topSessions = isPerfExpanded
-                      ? getTaskPerformanceTopSessions(task.performance, nowTick, 5)
-                      : []
-                    const normalizedProgressTotal = task.progress.total > 0 ? task.progress.total : 0
-                    const normalizedProgressCurrent = normalizedProgressTotal > 0
-                      ? Math.max(0, Math.min(normalizedProgressTotal, task.progress.current))
-                      : 0
-                    const currentSessionRatio = task.progress.phaseTotal > 0
-                      ? Math.max(0, Math.min(1, task.progress.phaseProgress / task.progress.phaseTotal))
-                      : null
-                    return (
-                      <div key={task.id} className={`task-card ${task.status}`}>
-                        <div className="task-main">
-                          <div className="task-title">{task.title}</div>
-                          <div className="task-meta">
-                            <span className={`task-status ${task.status}`}>{getTaskStatusLabel(task)}</span>
-                            <span>{new Date(task.createdAt).toLocaleString('zh-CN')}</span>
-                          </div>
-                          {task.status === 'running' && (
-                            <>
-                              <div className="task-progress-bar">
-                                <div
-                                  className="task-progress-fill"
-                                  style={{ width: `${normalizedProgressTotal > 0 ? (normalizedProgressCurrent / normalizedProgressTotal) * 100 : 0}%` }}
-                                />
-                              </div>
-                              <div className="task-progress-text">
-                                {normalizedProgressTotal > 0
-                                  ? `${Math.floor(normalizedProgressCurrent)} / ${normalizedProgressTotal}`
-                                  : '处理中'}
-                                {task.status === 'running' && currentSessionRatio !== null
-                                  ? `（当前会话 ${Math.round(currentSessionRatio * 100)}%）`
-                                  : ''}
-                                {task.progress.phaseLabel ? ` · ${task.progress.phaseLabel}` : ''}
-                              </div>
-                            </>
-                          )}
-                          {canShowPerfDetail && stageTotals && (
-                            <div className="task-perf-summary">
-                              <span>累计耗时 {formatDurationMs(stageTotalMs)}</span>
-                              {task.progress.total > 0 && (
-                                <span>平均/会话 {formatDurationMs(Math.floor(stageTotalMs / Math.max(1, task.progress.total)))}</span>
-                              )}
-                            </div>
-                          )}
-                          {canShowPerfDetail && isPerfExpanded && stageTotals && (
-                            <div className="task-perf-panel">
-                              <div className="task-perf-title">阶段耗时分布</div>
-                              {[
-                                { key: 'collect' as const, label: '收集消息' },
-                                { key: 'build' as const, label: '构建消息' },
-                                { key: 'write' as const, label: '写入文件' },
-                                { key: 'other' as const, label: '其他' }
-                              ].map(item => {
-                                const value = stageTotals[item.key]
-                                const ratio = stageTotalMs > 0 ? Math.min(100, (value / stageTotalMs) * 100) : 0
-                                return (
-                                  <div className="task-perf-row" key={item.key}>
-                                    <div className="task-perf-row-head">
-                                      <span>{item.label}</span>
-                                      <span>{formatDurationMs(value)}</span>
-                                    </div>
-                                    <div className="task-perf-row-track">
-                                      <div className="task-perf-row-fill" style={{ width: `${ratio}%` }} />
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                              <div className="task-perf-title">最慢会话 Top5</div>
-                              {topSessions.length === 0 ? (
-                                <div className="task-perf-empty">暂无会话耗时数据</div>
-                              ) : (
-                                <div className="task-perf-session-list">
-                                  {topSessions.map((session, index) => (
-                                    <div className="task-perf-session-item" key={session.sessionId}>
-                                      <span className="task-perf-session-rank">
-                                        {index + 1}. {session.sessionName || session.sessionId}
-                                        {!session.finishedAt ? '（进行中）' : ''}
-                                      </span>
-                                      <span className="task-perf-session-time">{formatDurationMs(session.liveElapsedMs)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {task.status === 'error' && <div className="task-error">{task.error || '任务失败'}</div>}
-                        </div>
-                        <div className="task-actions">
-                          {canShowPerfDetail && (
-                            <button
-                              className={`task-action-btn ${isPerfExpanded ? 'primary' : ''}`}
-                              type="button"
-                              onClick={() => setExpandedPerfTaskId(prev => (prev === task.id ? null : task.id))}
-                            >
-                              {isPerfExpanded ? '收起详情' : '性能详情'}
-                            </button>
-                          )}
-                          <button className="task-action-btn" onClick={() => task.payload.outputDir && void window.electronAPI.shell.openPath(task.payload.outputDir)}>
-                            <FolderOpen size={14} /> 目录
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <TaskCenterModal
+        isOpen={isTaskCenterOpen}
+        tasks={tasks}
+        taskRunningCount={taskRunningCount}
+        taskQueuedCount={taskQueuedCount}
+        expandedPerfTaskId={expandedPerfTaskId}
+        nowTick={nowTick}
+        onClose={closeTaskCenter}
+        onTogglePerfTask={toggleTaskPerfDetail}
+      />
 
       <div className="content-card-grid">
         {contentCards.map(card => {
@@ -3585,7 +3719,12 @@ function ExportPage() {
                   openContentExport(card.type)
                 }}
               >
-                {isCardRunning ? '批量导出中' : '批量导出'}
+                {isCardRunning ? (
+                  <>
+                    <span>批量导出中</span>
+                    <Loader2 size={14} className="spin" />
+                  </>
+                ) : '批量导出'}
               </button>
             </div>
           )
@@ -3714,89 +3853,7 @@ function ExportPage() {
                   <span className="contacts-list-header-actions">操作</span>
                 </div>
                 <div className="contacts-list">
-                    {filteredContacts.map((contact) => {
-                      const matchedSession = sessionRowByUsername.get(contact.username)
-                      const canExport = Boolean(matchedSession?.hasSession)
-                      const isRunning = canExport && runningSessionIds.has(contact.username)
-                      const isQueued = canExport && queuedSessionIds.has(contact.username)
-                      const recent = canExport ? formatRecentExportTime(lastExportBySession[contact.username], nowTick) : ''
-                      const countedMessages = normalizeMessageCount(sessionMessageCounts[contact.username])
-                      const hintedMessages = normalizeMessageCount(matchedSession?.messageCountHint)
-                      const displayedMessageCount = countedMessages ?? hintedMessages
-                      const messageCountLabel = !canExport
-                        ? '--'
-                        : typeof displayedMessageCount === 'number'
-                          ? displayedMessageCount.toLocaleString('zh-CN')
-                          : (isLoadingSessionCounts ? '统计中…' : '--')
-                      return (
-                        <div
-                          key={contact.username}
-                          className="contact-row"
-                        >
-                          <div className="contact-item">
-                            <div className="contact-avatar">
-                              {contact.avatarUrl ? (
-                                <img src={contact.avatarUrl} alt="" loading="lazy" />
-                              ) : (
-                                <span>{getAvatarLetter(contact.displayName)}</span>
-                              )}
-                            </div>
-                            <div className="contact-info">
-                              <div className="contact-name">{contact.displayName}</div>
-                              <div className="contact-remark">{contact.username}</div>
-                            </div>
-                            <div className="row-message-count">
-                              <div className="row-message-stats">
-                                <strong className={`row-message-count-value ${typeof displayedMessageCount === 'number' ? '' : 'muted'}`}>
-                                  {messageCountLabel}
-                                </strong>
-                              </div>
-                            </div>
-                            <div className="row-action-cell">
-                              <div className="row-action-main">
-                                <button
-                                  className="row-open-chat-btn"
-                                  disabled={!canExport}
-                                  title={canExport ? '在新窗口打开该会话' : '该联系人暂无会话记录'}
-                                  onClick={() => {
-                                    if (!canExport) return
-                                    void window.electronAPI.window.openSessionChatWindow(contact.username)
-                                  }}
-                                >
-                                  <ExternalLink size={13} />
-                                  打开对话
-                                </button>
-                                <button
-                                  className={`row-detail-btn ${showSessionDetailPanel && sessionDetail?.wxid === contact.username ? 'active' : ''}`}
-                                  onClick={() => openSessionDetail(contact.username)}
-                                >
-                                  详情
-                                </button>
-                                <button
-                                  className={`row-export-btn ${isRunning ? 'running' : ''} ${!canExport ? 'no-session' : ''}`}
-                                  disabled={!canExport || isRunning}
-                                  onClick={() => {
-                                    if (!matchedSession || !matchedSession.hasSession) return
-                                    openSingleExport({
-                                      ...matchedSession,
-                                      displayName: contact.displayName || matchedSession.displayName || matchedSession.username
-                                    })
-                                  }}
-                                >
-                                  {isRunning ? (
-                                    <>
-                                      <Loader2 size={14} className="spin" />
-                                      导出中
-                                    </>
-                                  ) : !canExport ? '暂无会话' : isQueued ? '排队中' : '单会话导出'}
-                                </button>
-                              </div>
-                              {recent && <span className="row-export-time">{recent}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                  {contactsListRows}
                 </div>
               </>
             )}
