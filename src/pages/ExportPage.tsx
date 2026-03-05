@@ -3812,10 +3812,10 @@ function ExportPage() {
       </div>
 
       <div className="export-section-title-row">
-        <h3 className="export-section-title">按会话批量导出</h3>
+        <h3 className="export-section-title">按会话导出</h3>
         <SectionInfoTooltip
-          label="按会话批量导出"
-          heading="按会话批量导出说明"
+          label="按会话导出"
+          heading="按会话导出说明"
           messages={[
             '按会话维度导出完整上下文，适合按客户、项目或群组进行归档。',
             '你可以先在列表中筛选目标会话，再批量导出，结果会保留每个会话的结构与时间线。'
@@ -3930,7 +3930,6 @@ function ExportPage() {
                   >
                     {isAllVisibleSelected ? '取消全选当前筛选' : '全选当前筛选'}
                   </button>
-                  <span className="selection-summary">已选 {selectedCount} 项</span>
                   <span className="selection-summary muted">
                     当前筛选 {visibleSelectedCount}/{visibleSelectableCount}
                   </span>
