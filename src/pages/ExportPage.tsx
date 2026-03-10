@@ -6371,137 +6371,139 @@ function ExportPage() {
               </div>
             </div>
 
-            <div
-              ref={contactsHorizontalViewportRef}
-              className="table-scroll-viewport"
-              onScroll={handleContactsHorizontalViewportScroll}
-            >
-              <div ref={contactsHorizontalContentRef} className="table-scroll-content">
-                <div className="session-table-sticky">
-                  {contactsList.length > 0 && isContactsListLoading && (
-                    <div className="table-stage-hint">
-                      <Loader2 size={14} className="spin" />
-                      联系人列表同步中…
-                    </div>
-                  )}
+            <div className="table-scroll-shell">
+              <div
+                ref={contactsHorizontalViewportRef}
+                className="table-scroll-viewport"
+                onScroll={handleContactsHorizontalViewportScroll}
+              >
+                <div ref={contactsHorizontalContentRef} className="table-scroll-content">
+                  <div className="session-table-sticky">
+                    {contactsList.length > 0 && isContactsListLoading && (
+                      <div className="table-stage-hint">
+                        <Loader2 size={14} className="spin" />
+                        联系人列表同步中…
+                      </div>
+                    )}
 
-                  {hasFilteredContacts && (
-                    <div
-                      className={`contacts-list-header ${hasContactsHorizontalOverflow ? 'is-draggable' : ''} ${isContactsHeaderDragging ? 'is-dragging' : ''}`}
-                      onPointerDown={handleContactsHeaderPointerDown}
-                      onPointerMove={handleContactsHeaderPointerMove}
-                      onPointerUp={handleContactsHeaderPointerUp}
-                      onPointerCancel={handleContactsHeaderPointerCancel}
-                    >
-                      <span className="contacts-list-header-select">
-                        <button
-                          className={`select-icon-btn ${isAllVisibleSelected ? 'checked' : ''}`}
-                          type="button"
-                          onClick={toggleSelectAllVisible}
-                          disabled={visibleSelectableCount === 0}
-                          title={isAllVisibleSelected ? '取消全选当前筛选联系人' : '全选当前筛选联系人'}
-                        >
-                          {isAllVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                        </button>
-                      </span>
-                      <span className="contacts-list-header-main">
-                        <span className="contacts-list-header-main-label">{contactsHeaderMainLabel}</span>
-                      </span>
-                      <span className="contacts-list-header-count">总消息数</span>
-                      <span className="contacts-list-header-media">表情包</span>
-                      <span className="contacts-list-header-media">语音</span>
-                      <span className="contacts-list-header-media">图片</span>
-                      <span className="contacts-list-header-media">视频</span>
-                      {shouldShowSnsColumn && (
-                        <span className="contacts-list-header-media">朋友圈</span>
-                      )}
-                      {shouldShowMutualFriendsColumn && (
-                        <span className="contacts-list-header-media">共同好友</span>
-                      )}
-                      <span className="contacts-list-header-actions">
-                        {selectedCount > 0 && (
-                          <>
-                            <button
-                              className="selection-clear-btn"
-                              type="button"
-                              onClick={clearSelection}
-                            >
-                              清空
-                            </button>
-                            <button
-                              className="selection-export-btn"
-                              type="button"
-                              onClick={openBatchExport}
-                            >
-                              <span>批量导出</span>
-                              <span className="selection-export-count">{selectedCount}</span>
-                            </button>
-                          </>
+                    {hasFilteredContacts && (
+                      <div
+                        className={`contacts-list-header ${hasContactsHorizontalOverflow ? 'is-draggable' : ''} ${isContactsHeaderDragging ? 'is-dragging' : ''}`}
+                        onPointerDown={handleContactsHeaderPointerDown}
+                        onPointerMove={handleContactsHeaderPointerMove}
+                        onPointerUp={handleContactsHeaderPointerUp}
+                        onPointerCancel={handleContactsHeaderPointerCancel}
+                      >
+                        <span className="contacts-list-header-select">
+                          <button
+                            className={`select-icon-btn ${isAllVisibleSelected ? 'checked' : ''}`}
+                            type="button"
+                            onClick={toggleSelectAllVisible}
+                            disabled={visibleSelectableCount === 0}
+                            title={isAllVisibleSelected ? '取消全选当前筛选联系人' : '全选当前筛选联系人'}
+                          >
+                            {isAllVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                          </button>
+                        </span>
+                        <span className="contacts-list-header-main">
+                          <span className="contacts-list-header-main-label">{contactsHeaderMainLabel}</span>
+                        </span>
+                        <span className="contacts-list-header-count">总消息数</span>
+                        <span className="contacts-list-header-media">表情包</span>
+                        <span className="contacts-list-header-media">语音</span>
+                        <span className="contacts-list-header-media">图片</span>
+                        <span className="contacts-list-header-media">视频</span>
+                        {shouldShowSnsColumn && (
+                          <span className="contacts-list-header-media">朋友圈</span>
                         )}
-                      </span>
+                        {shouldShowMutualFriendsColumn && (
+                          <span className="contacts-list-header-media">共同好友</span>
+                        )}
+                        <span className="contacts-list-header-actions">
+                          {selectedCount > 0 && (
+                            <>
+                              <button
+                                className="selection-clear-btn"
+                                type="button"
+                                onClick={clearSelection}
+                              >
+                                清空
+                              </button>
+                              <button
+                                className="selection-export-btn"
+                                type="button"
+                                onClick={openBatchExport}
+                              >
+                                <span>批量导出</span>
+                                <span className="selection-export-count">{selectedCount}</span>
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {contactsList.length === 0 && contactsLoadIssue ? (
+                    <div className="load-issue-state">
+                      <div className="issue-card">
+                        <div className="issue-title">
+                          <AlertTriangle size={18} />
+                          <span>{contactsLoadIssue.title}</span>
+                        </div>
+                        <p className="issue-message">{contactsLoadIssue.message}</p>
+                        <p className="issue-reason">{contactsLoadIssue.reason}</p>
+                        <ul className="issue-hints">
+                          <li>可能原因1：数据库当前仍在执行高开销查询（例如导出页后台统计）。</li>
+                          <li>可能原因2：contact.db 数据量较大，首次查询时间过长。</li>
+                          <li>可能原因3：数据库连接状态异常或 IPC 调用卡住。</li>
+                        </ul>
+                        <div className="issue-actions">
+                          <button className="issue-btn primary" onClick={() => void loadContactsList()}>
+                            <RefreshCw size={14} />
+                            <span>重试加载</span>
+                          </button>
+                          <button className="issue-btn" onClick={() => setShowContactsDiagnostics(prev => !prev)}>
+                            <ClipboardList size={14} />
+                            <span>{showContactsDiagnostics ? '收起诊断详情' : '查看诊断详情'}</span>
+                          </button>
+                          <button className="issue-btn" onClick={copyContactsDiagnostics}>
+                            <span>复制诊断信息</span>
+                          </button>
+                        </div>
+                        {showContactsDiagnostics && (
+                          <pre className="issue-diagnostics">{contactsDiagnosticsText}</pre>
+                        )}
+                      </div>
+                    </div>
+                  ) : isContactsListLoading && contactsList.length === 0 ? (
+                    <div className="loading-state">
+                      <Loader2 size={32} className="spin" />
+                      <span>联系人加载中...</span>
+                    </div>
+                  ) : !hasFilteredContacts ? (
+                    <div className="empty-state">
+                      <span>暂无联系人</span>
+                    </div>
+                  ) : (
+                    <div
+                      className="contacts-list"
+                      onWheelCapture={handleContactsListWheelCapture}
+                    >
+                      <Virtuoso
+                        ref={contactsVirtuosoRef}
+                        className="contacts-virtuoso"
+                        data={filteredContacts}
+                        computeItemKey={(_, contact) => contact.username}
+                        fixedItemHeight={76}
+                        itemContent={renderContactRow}
+                        rangeChanged={handleContactsRangeChanged}
+                        atTopStateChange={setIsContactsListAtTop}
+                        overscan={420}
+                      />
                     </div>
                   )}
                 </div>
-
-                {contactsList.length === 0 && contactsLoadIssue ? (
-                  <div className="load-issue-state">
-                    <div className="issue-card">
-                      <div className="issue-title">
-                        <AlertTriangle size={18} />
-                        <span>{contactsLoadIssue.title}</span>
-                      </div>
-                      <p className="issue-message">{contactsLoadIssue.message}</p>
-                      <p className="issue-reason">{contactsLoadIssue.reason}</p>
-                      <ul className="issue-hints">
-                        <li>可能原因1：数据库当前仍在执行高开销查询（例如导出页后台统计）。</li>
-                        <li>可能原因2：contact.db 数据量较大，首次查询时间过长。</li>
-                        <li>可能原因3：数据库连接状态异常或 IPC 调用卡住。</li>
-                      </ul>
-                      <div className="issue-actions">
-                        <button className="issue-btn primary" onClick={() => void loadContactsList()}>
-                          <RefreshCw size={14} />
-                          <span>重试加载</span>
-                        </button>
-                        <button className="issue-btn" onClick={() => setShowContactsDiagnostics(prev => !prev)}>
-                          <ClipboardList size={14} />
-                          <span>{showContactsDiagnostics ? '收起诊断详情' : '查看诊断详情'}</span>
-                        </button>
-                        <button className="issue-btn" onClick={copyContactsDiagnostics}>
-                          <span>复制诊断信息</span>
-                        </button>
-                      </div>
-                      {showContactsDiagnostics && (
-                        <pre className="issue-diagnostics">{contactsDiagnosticsText}</pre>
-                      )}
-                    </div>
-                  </div>
-                ) : isContactsListLoading && contactsList.length === 0 ? (
-                  <div className="loading-state">
-                    <Loader2 size={32} className="spin" />
-                    <span>联系人加载中...</span>
-                  </div>
-                ) : !hasFilteredContacts ? (
-                  <div className="empty-state">
-                    <span>暂无联系人</span>
-                  </div>
-                ) : (
-                  <div
-                    className="contacts-list"
-                    onWheelCapture={handleContactsListWheelCapture}
-                  >
-                    <Virtuoso
-                      ref={contactsVirtuosoRef}
-                      className="contacts-virtuoso"
-                      data={filteredContacts}
-                      computeItemKey={(_, contact) => contact.username}
-                      fixedItemHeight={76}
-                      itemContent={renderContactRow}
-                      rangeChanged={handleContactsRangeChanged}
-                      atTopStateChange={setIsContactsListAtTop}
-                      overscan={420}
-                    />
-                  </div>
-                )}
               </div>
             </div>
 

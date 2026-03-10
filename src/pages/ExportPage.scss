@@ -1717,6 +1717,7 @@
 }
 
 .table-wrap {
+  --contacts-native-scrollbar-compensation: 18px;
   --contacts-row-height: 76px;
   --contacts-default-visible-rows: 10;
   --contacts-default-list-height: calc(var(--contacts-row-height) * var(--contacts-default-visible-rows));
@@ -1740,12 +1741,19 @@
 }
 
 .table-wrap {
+  .table-scroll-shell {
+    overflow: hidden;
+  }
+
   .table-scroll-viewport {
     min-height: 0;
     overflow-x: auto;
     overflow-y: visible;
     scrollbar-width: none;
+    -ms-overflow-style: none;
     background: var(--bg-secondary);
+    padding-bottom: var(--contacts-native-scrollbar-compensation);
+    margin-bottom: calc(-1 * var(--contacts-native-scrollbar-compensation));
 
     &::-webkit-scrollbar {
       display: none;
