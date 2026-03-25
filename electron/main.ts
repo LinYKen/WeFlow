@@ -146,27 +146,67 @@ const normalizeReleaseNotes = (rawReleaseNotes: unknown): string => {
 
   if (!merged.trim()) return ''
 
-  const shouldStripReleaseSection = (headingRaw: string): boolean => {
-    const heading = headingRaw.trim().toLowerCase()
-    if (heading === '下载' || heading === 'download') return true
+  const normalizeHeadingText = (raw: string): string => {
+    return raw
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, '\'')
+      .replace(/&#x27;/gi, '\'')
+      .toLowerCase()
+      .replace(/[：:]/g, '')
+      .replace(/\s+/g, '')
+      .trim()
+  }
 
-    const compactHeading = heading.replace(/\s+/g, '')
-    if (compactHeading.startsWith('macos安装提示')) return true
-    if (compactHeading.startsWith('mac安装提示')) return true
+  const shouldStripReleaseSection = (headingRaw: string): boolean => {
+    const heading = normalizeHeadingText(headingRaw)
+    if (!heading) return false
+    if (heading.startsWith('下载') || heading.startsWith('download')) return true
+
+    if ((heading.includes('macos') || heading.startsWith('mac')) && heading.includes('安装提示')) return true
     return false
   }
 
-  // 兼容 electron-updater 直接返回 HTML 的场景
+  // 兼容 electron-updater 直接返回 HTML 的场景（含 dir/anchor 等标签嵌套）
   const removeDownloadSectionFromHtml = (input: string): string => {
-    return input
-      .replace(
-        /<h[1-6][^>]*>\s*(?:下载|download)\s*<\/h[1-6]>\s*[\s\S]*?(?=<h[1-6]\b|$)/gi,
-        ''
-      )
-      .replace(
-        /<h[1-6][^>]*>\s*(?:mac\s*os|mac)\s*安装提示(?:\s*[（(]\s*未知来源\s*[）)])?\s*<\/h[1-6]>\s*[\s\S]*?(?=<h[1-6]\b|$)/gi,
-        ''
-      )
+    const headingPattern = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi
+    const headings: Array<{ start: number; end: number; headingText: string }> = []
+    let match: RegExpExecArray | null
+
+    while ((match = headingPattern.exec(input)) !== null) {
+      const full = match[0]
+      headings.push({
+        start: match.index,
+        end: match.index + full.length,
+        headingText: match[2] || ''
+      })
+    }
+
+    if (headings.length === 0) return input
+
+    const rangesToRemove: Array<{ start: number; end: number }> = []
+    for (let i = 0; i < headings.length; i += 1) {
+      const current = headings[i]
+      if (!shouldStripReleaseSection(current.headingText)) continue
+
+      const nextStart = i + 1 < headings.length ? headings[i + 1].start : input.length
+      rangesToRemove.push({ start: current.start, end: nextStart })
+    }
+
+    if (rangesToRemove.length === 0) return input
+
+    let output = ''
+    let cursor = 0
+    for (const range of rangesToRemove) {
+      output += input.slice(cursor, range.start)
+      cursor = range.end
+    }
+    output += input.slice(cursor)
+    return output
   }
 
   // 兼容 Markdown 场景（Action 最终 release note 模板）
@@ -195,6 +235,8 @@ const normalizeReleaseNotes = (rawReleaseNotes: unknown): string => {
   }
 
   const cleaned = removeDownloadSectionFromMarkdown(removeDownloadSectionFromHtml(merged))
+    // 兜底：即使没有匹配到标题，也不在弹窗展示 macOS 隔离标记清理命令
+    .replace(/^[ \t>*-]*`?\s*xattr\s+-[a-z]*d[a-z]*\s+com\.apple\.quarantine[^\n]*`?\s*$/gim, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 

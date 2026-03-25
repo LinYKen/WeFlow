@@ -226,7 +226,7 @@ jobs:
           ## macOS 安装提示（未知来源）
           - 若打开时提示“来自未知开发者”或“无法验证开发者”，请到「系统设置 -> 隐私与安全性」中允许打开该应用。
           - 如果仍被系统拦截，请在终端执行以下命令去除隔离标记：
-          - `xattr -dr com.apple.quarantine "/Applications/WeFlow.app"`
+          - xattr -rd com.apple.quarantine /Applications/WeFlow.app
           - 执行后重新打开 WeFlow。
 
           > 如果某个平台链接暂时未生成，可进入完整发布页查看全部资源：$RELEASE_PAGE
