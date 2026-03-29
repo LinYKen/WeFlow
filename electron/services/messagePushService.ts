@@ -198,18 +198,19 @@ class MessagePushService {
     }
 
     const lastTimestamp = Number(session.lastTimestamp || 0)
-    const unreadCount = Number(session.unreadCount || 0)
-
     if (!previous) {
-      return unreadCount > 0 && lastTimestamp > 0
+      return lastTimestamp > 0
     }
 
     if (lastTimestamp <= previous.lastTimestamp) {
       return false
     }
 
-    // unread 未增长时，大概率是自己发送、其他设备已读或状态同步，不作为主动推送
-    return unreadCount > previous.unreadCount
+    // 不能只依赖 unreadCount：
+    // - 当前会话处于前台时，收到新消息后 unread 可能仍为 0
+    // - 机器人/监听场景需要拿到“已自动已读”的实时消息
+    // 后续是否真正推送，再由 pushSessionMessages 中的 isSend / 去重逻辑决定
+    return true
   }
 
   private async pushSessionMessages(session: ChatSession, previous: SessionBaseline | undefined): Promise<void> {
