@@ -350,6 +350,25 @@ export class KeyService {
     }
   }
 
+  private async findPidsByImageName(imageName: string): Promise<number[]> {
+    try {
+      const { stdout } = await execFileAsync('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'])
+      const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+      const pids: number[] = []
+      for (const line of lines) {
+        if (line.startsWith('INFO:')) continue
+        const parts = line.split('","').map((p) => p.replace(/^"|"$/g, ''))
+        if (parts[0]?.toLowerCase() === imageName.toLowerCase()) {
+          const pid = Number(parts[1])
+          if (!Number.isNaN(pid)) pids.push(pid)
+        }
+      }
+      return pids
+    } catch (e) {
+      return []
+    }
+  }
+
   private async findWeChatPid(): Promise<number | null> {
     const names = ['Weixin.exe', 'WeChat.exe']
     for (const name of names) {
@@ -358,6 +377,45 @@ export class KeyService {
     }
     const fallbackPid = await this.waitForWeChatWindow(5000)
     return fallbackPid ?? null
+  }
+
+  private async collectCandidateWeChatPids(): Promise<number[]> {
+    const buckets = await Promise.all([
+      this.findPidsByImageName('Weixin.exe'),
+      this.findPidsByImageName('WeChat.exe')
+    ])
+    const unique: number[] = []
+    const seen = new Set<number>()
+    for (const pid of buckets.flat()) {
+      if (!pid || seen.has(pid)) continue
+      seen.add(pid)
+      unique.push(pid)
+    }
+    return unique
+  }
+
+  private async isLiveWeChatPid(pid: number): Promise<boolean> {
+    if (!pid || !Number.isFinite(pid)) return false
+    try {
+      const imagePath = await this.getProcessExecutablePath(pid)
+      if (!imagePath) return false
+      const lower = imagePath.toLowerCase()
+      return lower.endsWith('\\weixin.exe') || lower.endsWith('\\wechat.exe')
+    } catch {
+      return false
+    }
+  }
+
+  private isTransientHookError(message: string): boolean {
+    const normalized = (message || '').toLowerCase()
+    return (
+      normalized.includes('目标进程可能已退出') ||
+      normalized.includes('获取微信版本失败') ||
+      normalized.includes('target process') ||
+      normalized.includes('process may have exited') ||
+      normalized.includes('may have exited') ||
+      normalized.includes('version')
+    )
   }
 
   private async waitForWeChatExit(timeoutMs = 8000): Promise<boolean> {
@@ -594,6 +652,100 @@ export class KeyService {
     return true
   }
 
+  private async waitForReadyWeChatWindowPid(timeoutMs = 30000): Promise<number | null> {
+    if (!this.ensureUser32()) return null
+    const startTime = Date.now()
+    while (Date.now() - startTime < timeoutMs) {
+      let foundPid: number | null = null
+
+      const enumWindowsCallback = this.koffi.register((hWnd: any, lParam: any) => {
+        if (!this.IsWindowVisible(hWnd)) return true
+        const title = this.getWindowTitle(hWnd)
+        if (!this.isWeChatWindowTitle(title)) return true
+
+        const children = this.collectChildWindowInfos(hWnd)
+        if (!this.hasReadyComponents(children)) return true
+
+        const pidBuf = Buffer.alloc(4)
+        this.GetWindowThreadProcessId(hWnd, pidBuf)
+        const pid = pidBuf.readUInt32LE(0)
+        if (pid) {
+          foundPid = pid
+          return false
+        }
+        return true
+      }, this.WNDENUMPROC_PTR)
+
+      this.EnumWindows(enumWindowsCallback, 0)
+      this.koffi.unregister(enumWindowsCallback)
+
+      if (foundPid) return foundPid
+      await new Promise(r => setTimeout(r, 500))
+    }
+    return null
+  }
+
+  private drainHookStatus(logs: string[], onStatus?: (message: string, level: number) => void): void {
+    for (let i = 0; i < 5; i++) {
+      const statusBuffer = Buffer.alloc(256)
+      const levelOut = [0]
+      if (!this.getStatusMessage(statusBuffer, statusBuffer.length, levelOut)) break
+      const msg = this.decodeUtf8(statusBuffer)
+      const level = levelOut[0] ?? 0
+      if (!msg) continue
+      logs.push(msg)
+      onStatus?.(msg, level)
+    }
+  }
+
+  private async tryGetDbKeyFromPid(
+    pid: number,
+    budgetMs: number,
+    logs: string[],
+    onStatus?: (message: string, level: number) => void
+  ): Promise<{ key?: string; hookError?: string }> {
+    if (budgetMs <= 0) return {}
+    logs.push(`[key] try pid=${pid} budgetMs=${budgetMs}`)
+
+    onStatus?.(`正在尝试从微信进程 ${pid} 读取密钥...`, 0)
+    const ok = this.initHook(pid)
+    if (!ok) {
+      this.drainHookStatus(logs, onStatus)
+      const hookError = this.getLastErrorMsg ? this.decodeCString(this.getLastErrorMsg()) : ''
+      if (hookError) {
+        logs.push(`[key] pid=${pid} initHook failed: ${hookError}`)
+      }
+      try {
+        this.cleanupHook()
+      } catch { }
+      return { hookError }
+    }
+
+    const keyBuffer = Buffer.alloc(128)
+    const start = Date.now()
+    try {
+      while (Date.now() - start < budgetMs) {
+        if (this.pollKeyData(keyBuffer, keyBuffer.length)) {
+          const key = this.decodeUtf8(keyBuffer)
+          if (key.length === 64) {
+            onStatus?.('密钥获取成功', 1)
+            logs.push(`[key] pid=${pid} key acquired`)
+            return { key }
+          }
+        }
+        this.drainHookStatus(logs, onStatus)
+        await new Promise((resolve) => setTimeout(resolve, 120))
+      }
+    } finally {
+      try {
+        this.cleanupHook()
+      } catch { }
+    }
+
+    logs.push(`[key] pid=${pid} budget exhausted without key`)
+    return {}
+  }
+
   // --- DB Key Logic (Unchanged core flow) ---
 
   async autoGetDbKey(
@@ -677,6 +829,139 @@ export class KeyService {
       return {
         success: false,
         error: '微信已启动但尚未完成登录，请先在微信客户端完成登录后再重试自动获取密钥。',
+        logs
+      }
+    }
+
+    return { success: false, error: '获取密钥超时', logs }
+  }
+
+  async autoGetDbKeyWithBootstrap(
+      timeoutMs = 120_000,
+      onStatus?: (message: string, level: number) => void
+  ): Promise<DbKeyResult> {
+    if (!this.ensureWin32()) return { success: false, error: '仅支持 Windows' }
+    if (!this.ensureLoaded()) return { success: false, error: 'wx_key.dll 未加载' }
+    if (!this.ensureKernel32()) return { success: false, error: 'Kernel32 Init Failed' }
+
+    const logs: string[] = []
+
+    onStatus?.('正在定位微信安装路径...', 0)
+    const wechatPath = await this.findWeChatInstallPath()
+    if (!wechatPath) {
+      const err = '未找到微信安装路径，请确认已安装 PC 微信'
+      onStatus?.(err, 2)
+      return { success: false, error: err, logs }
+    }
+
+    onStatus?.('正在关闭微信以进行获取...', 0)
+    const closed = await this.killWeChatProcesses()
+    if (!closed) {
+      const err = '无法自动关闭微信，请手动退出后重试'
+      onStatus?.(err, 2)
+      return { success: false, error: err, logs }
+    }
+
+    onStatus?.('正在启动微信...', 0)
+    const sub = spawn(wechatPath, {
+      detached: true,
+      stdio: 'ignore',
+      cwd: dirname(wechatPath)
+    })
+    sub.unref()
+
+    onStatus?.('等待微信界面就绪...', 0)
+    const bootstrapPid = await this.waitForWeChatWindow()
+    if (!bootstrapPid) {
+      return { success: false, error: '启动微信失败或等待界面就绪超时', logs }
+    }
+
+    onStatus?.(`检测到微信窗口 (PID: ${bootstrapPid})，正在等待登录并尝试读取密钥...`, 0)
+
+    const startedAt = Date.now()
+    let everSawReadyWindow = false
+    let lastHookError = ''
+    let lastNonTransientHookError = ''
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const remainingMs = timeoutMs - (Date.now() - startedAt)
+      const readyPid = await this.waitForReadyWeChatWindowPid(1200)
+      if (readyPid) {
+        everSawReadyWindow = true
+      }
+
+      const candidatePids = await this.collectCandidateWeChatPids()
+      const orderedPids: number[] = []
+      const seen = new Set<number>()
+      const pushPid = async (pid?: number | null) => {
+        if (!pid || seen.has(pid)) return
+        if (!(await this.isLiveWeChatPid(pid))) return
+        seen.add(pid)
+        orderedPids.push(pid)
+      }
+
+      await pushPid(readyPid)
+      for (const pid of candidatePids) {
+        await pushPid(pid)
+      }
+      await pushPid(bootstrapPid)
+      logs.push(`[key] candidate pids ready=${readyPid ?? 'none'} bootstrap=${bootstrapPid} list=${orderedPids.join(',') || 'none'}`)
+
+      if (orderedPids.length === 0) {
+        onStatus?.('等待微信登录完成...', 0)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        continue
+      }
+
+      for (let index = 0; index < orderedPids.length; index++) {
+        const pid = orderedPids[index]
+        const isPreferredPid = index === 0 && !!readyPid && pid === readyPid
+        const perPidBudgetCap = isPreferredPid ? 20_000 : 8_000
+        const budgetMs = Math.max(2_000, Math.min(perPidBudgetCap, remainingMs))
+        onStatus?.(`尝试从微信进程读取密钥 (PID: ${pid})...`, 0)
+        const { key, hookError } = await this.tryGetDbKeyFromPid(pid, budgetMs, logs, onStatus)
+        if (key) {
+          onStatus?.('密钥获取成功', 1)
+          return { success: true, key, logs }
+        }
+        if (hookError) {
+          lastHookError = hookError
+          logs.push(`[key] pid=${pid} hookError=${hookError}`)
+          if (!this.isTransientHookError(hookError)) {
+            lastNonTransientHookError = hookError
+          }
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+
+    const finalHookError = lastNonTransientHookError || (this.isTransientHookError(lastHookError) ? '' : lastHookError)
+
+    if (finalHookError) {
+      if (
+        finalHookError.includes('0xC0000022') ||
+        finalHookError.includes('ACCESS_DENIED') ||
+        lastHookError.includes('打开目标进程失败')
+      ) {
+        return {
+          success: false,
+          error: `权限不足：无法访问微信进程。
+
+解决方法：
+1. 右键 WeFlow 图标，选择“以管理员身份运行”
+2. 确保微信没有以管理员权限单独运行
+3. 再重新点击自动配置或自动获取密钥`,
+          logs
+        }
+      }
+      return { success: false, error: finalHookError, logs }
+    }
+
+    if (!everSawReadyWindow) {
+      return {
+        success: false,
+        error: '微信已启动，但在限定时间内没有进入可读取密钥的主界面。请确认已完成登录并停留在聊天主界面后重试。',
         logs
       }
     }

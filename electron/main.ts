@@ -2860,7 +2860,13 @@ function createRuntimeIntegrationHandlers(): RuntimeIntegrationHandlers {
       }
       return { success: true, wxids: dbPathService.scanWxidCandidates(rootPath) }
     },
-    autoGetDbKey: async () => keyService.autoGetDbKey(180_000),
+    autoGetDbKey: async ({ body }) => {
+      const restartWeChat = body.restartWeChat !== false
+      if (restartWeChat) {
+        return keyService.autoGetDbKeyWithBootstrap(180_000)
+      }
+      return keyService.autoGetDbKey(180_000)
+    },
     autoGetImageKey: async ({ body }) => {
       const manualDir = typeof body.manualDir === 'string' ? body.manualDir : undefined
       const wxid = typeof body.wxid === 'string' ? body.wxid : undefined

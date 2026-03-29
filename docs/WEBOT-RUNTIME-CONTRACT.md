@@ -126,7 +126,31 @@ Wraps `dbPathService.scanWxidCandidates(rootPath)`.
 POST /api/v1/bootstrap/auto-get-db-key
 ```
 
-Wraps `keyService.autoGetDbKey()`.
+Hidden-backend bootstrap now defaults to a **bootstrap wrapper** around the existing key logic:
+
+- locate installed WeChat
+- close running WeChat
+- relaunch WeChat
+- wait for login/main window readiness
+- try candidate WeChat PIDs until the db key is acquired
+
+Default behavior is equivalent to:
+
+```json
+{
+  "restartWeChat": true
+}
+```
+
+If a future caller explicitly wants the old in-process-only behavior, it can send:
+
+```json
+{
+  "restartWeChat": false
+}
+```
+
+That fallback path still wraps `keyService.autoGetDbKey()`.
 
 ### 5. Auto get image key
 
@@ -249,6 +273,7 @@ What is already in place:
 - config/userData path override
 - runtime status API
 - bootstrap wrapper APIs
+- bootstrap db-key wrapper now matches the older “close/reopen WeChat before grabbing key” behavior used in the customized branch
 - background HTTP API autostart
 - hidden backend startup still wiring `messagePushService`
 
