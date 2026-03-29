@@ -259,6 +259,11 @@ class HttpService {
   broadcastMessagePush(payload: Record<string, unknown>): void {
     if (!this.running || this.messagePushClients.size === 0) return
     const eventBody = `event: message.new\ndata: ${JSON.stringify(payload)}\n\n`
+    console.log(`[HttpService] Broadcasting message push to ${this.messagePushClients.size} client(s): ${JSON.stringify({
+      sessionId: payload['sessionId'] ?? null,
+      messageKey: payload['messageKey'] ?? null,
+      sourceName: payload['sourceName'] ?? null
+    })}`)
 
     for (const client of Array.from(this.messagePushClients)) {
       try {
@@ -480,9 +485,11 @@ class HttpService {
     res.write(`event: ready\ndata: ${JSON.stringify({ success: true, stream: this.getMessagePushStreamUrl() })}\n\n`)
 
     this.messagePushClients.add(res)
+    console.log(`[HttpService] SSE message push client connected, total=${this.messagePushClients.size}`)
 
     const cleanup = () => {
       this.messagePushClients.delete(res)
+      console.log(`[HttpService] SSE message push client disconnected, total=${this.messagePushClients.size}`)
     }
 
     req.on('close', cleanup)

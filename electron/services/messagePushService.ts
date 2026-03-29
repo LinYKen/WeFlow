@@ -43,9 +43,26 @@ class MessagePushService {
     this.configService = ConfigService.getInstance()
   }
 
+  private log(message: string, extra?: Record<string, unknown>): void {
+    if (extra && Object.keys(extra).length > 0) {
+      console.log(`[MessagePushService] ${message} ${JSON.stringify(extra)}`)
+      return
+    }
+    console.log(`[MessagePushService] ${message}`)
+  }
+
+  private warn(message: string, extra?: Record<string, unknown>): void {
+    if (extra && Object.keys(extra).length > 0) {
+      console.warn(`[MessagePushService] ${message} ${JSON.stringify(extra)}`)
+      return
+    }
+    console.warn(`[MessagePushService] ${message}`)
+  }
+
   start(): void {
     if (this.started) return
     this.started = true
+    this.log('start() called')
     void this.refreshConfiguration('startup')
   }
 
@@ -61,6 +78,12 @@ class MessagePushService {
     }
 
     const tableName = String(payload?.table || '').trim().toLowerCase()
+    this.log('received db monitor event', {
+      type,
+      table: tableName || null,
+      action: payload?.action ?? null,
+      pushEnabled: this.isPushEnabled()
+    })
     if (tableName && tableName !== 'session') {
       return
     }
@@ -99,26 +122,37 @@ class MessagePushService {
 
   private async refreshConfiguration(reason: string): Promise<void> {
     if (!this.isPushEnabled()) {
+      this.log('refresh skipped because message push is disabled', { reason })
       this.resetRuntimeState()
       return
     }
 
+    this.log('refresh configuration', {
+      reason,
+      dbPathConfigured: Boolean(String(this.configService.get('dbPath') || '').trim()),
+      wxidConfigured: Boolean(String(this.configService.get('myWxid') || '').trim()),
+      decryptKeyConfigured: Boolean(String(this.configService.get('decryptKey') || '').trim())
+    })
+
     const connectResult = await chatService.connect()
     if (!connectResult.success) {
-      console.warn(`[MessagePushService] Bootstrap connect failed (${reason}):`, connectResult.error)
+      this.warn('bootstrap connect failed', { reason, error: connectResult.error || null })
       return
     }
 
+    this.log('bootstrap connect ok', { reason })
     await this.bootstrapBaseline()
   }
 
   private async bootstrapBaseline(): Promise<void> {
     const sessionsResult = await chatService.getSessions()
     if (!sessionsResult.success || !sessionsResult.sessions) {
+      this.warn('bootstrap baseline failed to get sessions', { error: sessionsResult.error || null })
       return
     }
     this.setBaseline(sessionsResult.sessions as ChatSession[])
     this.baselineReady = true
+    this.log('baseline ready', { sessionCount: sessionsResult.sessions.length })
   }
 
   private scheduleSync(): void {
@@ -135,21 +169,26 @@ class MessagePushService {
   private async flushPendingChanges(): Promise<void> {
     if (this.processing) {
       this.rerunRequested = true
+      this.log('flush skipped because processing is in progress; rerun requested')
       return
     }
 
     this.processing = true
     try {
-      if (!this.isPushEnabled()) return
+      if (!this.isPushEnabled()) {
+        this.log('flush skipped because message push is disabled')
+        return
+      }
 
       const connectResult = await chatService.connect()
       if (!connectResult.success) {
-        console.warn('[MessagePushService] Sync connect failed:', connectResult.error)
+        this.warn('sync connect failed', { error: connectResult.error || null })
         return
       }
 
       const sessionsResult = await chatService.getSessions()
       if (!sessionsResult.success || !sessionsResult.sessions) {
+        this.warn('flush failed to get sessions', { error: sessionsResult.error || null })
         return
       }
 
@@ -157,6 +196,7 @@ class MessagePushService {
       if (!this.baselineReady) {
         this.setBaseline(sessions)
         this.baselineReady = true
+        this.log('baseline initialized during flush', { sessionCount: sessions.length })
         return
       }
 
@@ -164,6 +204,10 @@ class MessagePushService {
       this.setBaseline(sessions)
 
       const candidates = sessions.filter((session) => this.shouldInspectSession(previousBaseline.get(session.username), session))
+      this.log('flush computed candidates', {
+        sessionCount: sessions.length,
+        candidateCount: candidates.length
+      })
       for (const session of candidates) {
         await this.pushSessionMessages(session, previousBaseline.get(session.username))
       }
@@ -215,30 +259,74 @@ class MessagePushService {
 
   private async pushSessionMessages(session: ChatSession, previous: SessionBaseline | undefined): Promise<void> {
     const since = Math.max(0, Number(previous?.lastTimestamp || 0) - 1)
+    this.log('inspecting session for new messages', {
+      sessionId: session.username,
+      since,
+      previousLastTimestamp: Number(previous?.lastTimestamp || 0),
+      currentLastTimestamp: Number(session.lastTimestamp || 0),
+      previousUnreadCount: Number(previous?.unreadCount || 0),
+      currentUnreadCount: Number(session.unreadCount || 0)
+    })
     const newMessagesResult = await chatService.getNewMessages(session.username, since, 1000)
     if (!newMessagesResult.success || !newMessagesResult.messages || newMessagesResult.messages.length === 0) {
+      this.log('no new messages returned for session', {
+        sessionId: session.username,
+        success: newMessagesResult.success,
+        count: Array.isArray(newMessagesResult.messages) ? newMessagesResult.messages.length : 0,
+        error: newMessagesResult.error || null
+      })
       return
     }
+
+    this.log('new messages fetched for session', {
+      sessionId: session.username,
+      count: newMessagesResult.messages.length
+    })
+
+    let broadcastCount = 0
+    let skipSentCount = 0
+    let skipOldCount = 0
+    let skipRecentCount = 0
+    let skipPayloadCount = 0
 
     for (const message of newMessagesResult.messages) {
       const messageKey = String(message.messageKey || '').trim()
       if (!messageKey) continue
-      if (message.isSend === 1) continue
+      if (message.isSend === 1) {
+        skipSentCount += 1
+        continue
+      }
 
       if (previous && Number(message.createTime || 0) < Number(previous.lastTimestamp || 0)) {
+        skipOldCount += 1
         continue
       }
 
       if (this.isRecentMessage(messageKey)) {
+        skipRecentCount += 1
         continue
       }
 
       const payload = await this.buildPayload(session, message)
-      if (!payload) continue
+      if (!payload) {
+        skipPayloadCount += 1
+        continue
+      }
 
       httpService.broadcastMessagePush(payload)
       this.rememberMessageKey(messageKey)
+      broadcastCount += 1
     }
+
+    this.log('session inspection finished', {
+      sessionId: session.username,
+      fetchedCount: newMessagesResult.messages.length,
+      broadcastCount,
+      skipSentCount,
+      skipOldCount,
+      skipRecentCount,
+      skipPayloadCount
+    })
   }
 
   private async buildPayload(session: ChatSession, message: Message): Promise<MessagePushPayload | null> {
