@@ -1,0 +1,72 @@
+{
+  "appId": "com.WeFlow.app",
+  "productName": "WeFlow",
+  "directories": {
+    "output": "release-runtime"
+  },
+  "win": {
+    "target": [
+      "dir"
+    ],
+    "icon": "public/icon.ico"
+  },
+  "linux": {
+    "target": [
+      "dir"
+    ],
+    "icon": "public/icon.png"
+  },
+  "mac": {
+    "target": [
+      "dir"
+    ],
+    "icon": "resources/icon.icns"
+  },
+  "extraResources": [
+    {
+      "from": "resources/",
+      "to": "resources/"
+    },
+    {
+      "from": "public/icon.ico",
+      "to": "icon.ico"
+    },
+    {
+      "from": "public/icon.png",
+      "to": "icon.png"
+    },
+    {
+      "from": "electron/assets/wasm/",
+      "to": "assets/wasm/"
+    }
+  ],
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*"
+  ],
+  "asarUnpack": [
+    "node_modules/silk-wasm/**/*",
+    "node_modules/sherpa-onnx-node/**/*",
+    "node_modules/sherpa-onnx-*/*",
+    "node_modules/sherpa-onnx-*/**/*",
+    "node_modules/ffmpeg-static/**/*"
+  ],
+  "extraFiles": [
+    {
+      "from": "resources/msvcp140.dll",
+      "to": "."
+    },
+    {
+      "from": "resources/msvcp140_1.dll",
+      "to": "."
+    },
+    {
+      "from": "resources/vcruntime140.dll",
+      "to": "."
+    },
+    {
+      "from": "resources/vcruntime140_1.dll",
+      "to": "."
+    }
+  ]
+}

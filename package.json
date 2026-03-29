@@ -18,6 +18,8 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build && electron-builder",
+    "build:runtime": "tsc && vite build && electron-builder --dir --config electron-builder.runtime.json",
+    "verify:runtime": "node scripts/verifyRuntimeContract.mjs",
     "preview": "vite preview",
     "electron:dev": "vite --mode electron",
     "electron:build": "npm run build"

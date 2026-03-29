@@ -133,17 +133,14 @@ export class ConfigService {
       wordCloudExcludeWords: []
     }
 
+    const configRootOverride = String(process.env.WEFLOW_CONFIG_CWD || process.env.WEFLOW_USER_DATA_PATH || '').trim()
     const storeOptions: any = {
       name: 'WeFlow-config',
       defaults,
       projectName: String(process.env.WEFLOW_PROJECT_NAME || 'WeFlow').trim() || 'WeFlow'
     }
-    const runningInWorker = process.env.WEFLOW_WORKER === '1'
-    if (runningInWorker) {
-      const cwd = String(process.env.WEFLOW_CONFIG_CWD || process.env.WEFLOW_USER_DATA_PATH || '').trim()
-      if (cwd) {
-        storeOptions.cwd = cwd
-      }
+    if (configRootOverride) {
+      storeOptions.cwd = configRootOverride
     }
 
     try {

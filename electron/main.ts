@@ -28,7 +28,7 @@ import { exportCardDiagnosticsService } from './services/exportCardDiagnosticsSe
 import { cloudControlService } from './services/cloudControlService'
 
 import { destroyNotificationWindow, registerNotificationHandlers, showNotification } from './windows/notificationWindow'
-import { httpService } from './services/httpService'
+import { httpService, type RuntimeIntegrationHandlers } from './services/httpService'
 import { messagePushService } from './services/messagePushService'
 
 
@@ -44,6 +44,96 @@ const AUTO_UPDATE_ENABLED =
   process.env.AUTO_UPDATE_ENABLED === 'true' ||
   process.env.AUTO_UPDATE_ENABLED === '1' ||
   (process.env.AUTO_UPDATE_ENABLED == null && !process.env.VITE_DEV_SERVER_URL)
+
+interface RuntimeLaunchOptions {
+  hiddenBackend: boolean
+  httpApiAutostart: boolean
+  httpApiPort?: number
+  integrationToken: string
+  configRoot?: string
+  userDataPath?: string
+}
+
+interface RuntimeSetupStatus {
+  setupComplete: boolean
+  hasDbPath: boolean
+  hasWxid: boolean
+  hasDecryptKey: boolean
+  onboardingDone: boolean
+  reason: 'ready' | 'setup_incomplete'
+}
+
+function parseArgValue(argv: string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  const direct = argv.find((item) => item.startsWith(prefix))
+  if (direct) return direct.slice(prefix.length)
+
+  const index = argv.findIndex((item) => item === name)
+  if (index >= 0 && index + 1 < argv.length) {
+    return argv[index + 1]
+  }
+  return undefined
+}
+
+function parseRuntimeLaunchOptions(argv: string[] = process.argv): RuntimeLaunchOptions {
+  const hiddenBackend =
+    argv.includes('--hidden-backend') ||
+    process.env.WEFLOW_HIDDEN_BACKEND === '1' ||
+    process.env.WEFLOW_HIDDEN_BACKEND === 'true'
+  const httpApiAutostart =
+    argv.includes('--http-api-autostart') ||
+    process.env.WEFLOW_HTTP_API_AUTOSTART === '1' ||
+    process.env.WEFLOW_HTTP_API_AUTOSTART === 'true'
+
+  const portRaw =
+    parseArgValue(argv, '--http-api-port') ||
+    process.env.WEFLOW_HTTP_API_PORT ||
+    ''
+  const parsedPort = Number.parseInt(String(portRaw), 10)
+
+  const integrationToken =
+    parseArgValue(argv, '--integration-token') ||
+    process.env.WEFLOW_INTEGRATION_TOKEN ||
+    ''
+
+  const configRoot =
+    parseArgValue(argv, '--config-root') ||
+    process.env.WEFLOW_CONFIG_CWD ||
+    ''
+
+  const userDataPath =
+    parseArgValue(argv, '--user-data-path') ||
+    process.env.WEFLOW_USER_DATA_PATH ||
+    ''
+
+  return {
+    hiddenBackend,
+    httpApiAutostart,
+    httpApiPort: Number.isFinite(parsedPort) ? parsedPort : undefined,
+    integrationToken: String(integrationToken || '').trim(),
+    configRoot: String(configRoot || '').trim() || undefined,
+    userDataPath: String(userDataPath || '').trim() || undefined
+  }
+}
+
+const runtimeLaunchOptions = parseRuntimeLaunchOptions(process.argv)
+
+if (runtimeLaunchOptions.configRoot) {
+  process.env.WEFLOW_CONFIG_CWD = runtimeLaunchOptions.configRoot
+}
+
+if (runtimeLaunchOptions.userDataPath) {
+  process.env.WEFLOW_USER_DATA_PATH = runtimeLaunchOptions.userDataPath
+  try {
+    app.setPath('userData', runtimeLaunchOptions.userDataPath)
+  } catch (error) {
+    console.warn('[WeFlow][runtime] Failed to override userData path:', error)
+  }
+}
+
+if (runtimeLaunchOptions.integrationToken) {
+  process.env.WEFLOW_INTEGRATION_TOKEN = runtimeLaunchOptions.integrationToken
+}
 
 // 使用白名单过滤 PATH，避免被第三方目录中的旧版 VC++ 运行库劫持。
 // 仅保留系统目录（Windows/System32/SysWOW64）和应用自身目录（可执行目录、resources）。
@@ -2681,6 +2771,165 @@ function registerIpcHandlers() {
 // 主窗口引用
 let mainWindow: BrowserWindow | null = null
 
+function getConfiguredHttpPort(): number {
+  if (runtimeLaunchOptions.httpApiPort && Number.isFinite(runtimeLaunchOptions.httpApiPort)) {
+    return runtimeLaunchOptions.httpApiPort
+  }
+  const configuredPort = Number(configService?.get('httpApiPort') || process.env.WEFLOW_HTTP_API_PORT || 5031)
+  return Number.isFinite(configuredPort) ? configuredPort : 5031
+}
+
+function getRuntimeSetupStatus(): RuntimeSetupStatus {
+  const cfg = configService || ConfigService.getInstance()
+  const dbPath = String(cfg.get('dbPath') || '').trim()
+  const decryptKey = String(cfg.get('decryptKey') || '').trim()
+  const myWxid = String(cfg.get('myWxid') || '').trim()
+  const onboardingDone = cfg.get('onboardingDone') === true
+  const hasDbPath = Boolean(dbPath)
+  const hasWxid = Boolean(myWxid)
+  const hasDecryptKey = Boolean(decryptKey)
+  const setupComplete = hasDbPath && hasWxid && hasDecryptKey && onboardingDone
+
+  return {
+    setupComplete,
+    hasDbPath,
+    hasWxid,
+    hasDecryptKey,
+    onboardingDone,
+    reason: setupComplete ? 'ready' : 'setup_incomplete'
+  }
+}
+
+async function getRuntimeStatusPayload() {
+  const setup = getRuntimeSetupStatus()
+  return {
+    success: true,
+    mode: runtimeLaunchOptions.hiddenBackend ? 'hidden-backend' : 'interactive',
+    httpApiRunning: httpService.isRunning(),
+    httpApiPort: httpService.getPort() || getConfiguredHttpPort(),
+    httpApiEnabled: configService?.get('httpApiEnabled') === true,
+    httpApiHost: String(configService?.get('httpApiHost') || '127.0.0.1').trim() || '127.0.0.1',
+    httpApiTokenConfigured: Boolean(String(configService?.get('httpApiToken') || '').trim()),
+    messagePushEnabled: configService?.get('messagePushEnabled') === true,
+    integrationTokenConfigured: Boolean(runtimeLaunchOptions.integrationToken),
+    configRoot: process.env.WEFLOW_CONFIG_CWD || null,
+    userDataPath: app.getPath('userData'),
+    ...setup
+  }
+}
+
+async function ensureRuntimeHttpApiStarted(reason: string): Promise<{ success: boolean; port?: number; skipped?: boolean; error?: string }> {
+  const port = getConfiguredHttpPort()
+  const host = String(configService?.get('httpApiHost') || '127.0.0.1').trim() || '127.0.0.1'
+  const shouldStart =
+    runtimeLaunchOptions.hiddenBackend ||
+    runtimeLaunchOptions.httpApiAutostart ||
+    configService?.get('httpApiEnabled') === true
+
+  if (!shouldStart) {
+    console.log(`[WeFlow][runtime] HTTP API autostart skipped (${reason})`)
+    return { success: true, port, skipped: true }
+  }
+
+  if (configService && runtimeLaunchOptions.httpApiPort && configService.get('httpApiPort') !== port) {
+    configService.set('httpApiPort', port as any)
+  }
+
+  const result = await httpService.start(port, host)
+  if (!result.success) {
+    console.error(`[WeFlow][runtime] HTTP API start failed (${reason}):`, result.error)
+  }
+  return result
+}
+
+function createRuntimeIntegrationHandlers(): RuntimeIntegrationHandlers {
+  return {
+    getRuntimeStatus: async () => getRuntimeStatusPayload(),
+    autoDetectDbPath: async () => dbPathService.autoDetect(),
+    scanWxids: async ({ body }) => {
+      const rootPath = String(body.rootPath || '').trim()
+      if (!rootPath) {
+        return { success: false, error: 'Missing required field: rootPath' }
+      }
+      return { success: true, wxids: dbPathService.scanWxids(rootPath) }
+    },
+    scanWxidCandidates: async ({ body }) => {
+      const rootPath = String(body.rootPath || '').trim()
+      if (!rootPath) {
+        return { success: false, error: 'Missing required field: rootPath' }
+      }
+      return { success: true, wxids: dbPathService.scanWxidCandidates(rootPath) }
+    },
+    autoGetDbKey: async () => keyService.autoGetDbKey(180_000),
+    autoGetImageKey: async ({ body }) => {
+      const manualDir = typeof body.manualDir === 'string' ? body.manualDir : undefined
+      const wxid = typeof body.wxid === 'string' ? body.wxid : undefined
+      return keyService.autoGetImageKey(manualDir, undefined, wxid)
+    },
+    testConnection: async ({ body }) => {
+      const dbPath = String(body.dbPath || '').trim()
+      const hexKey = String(body.hexKey || body.decryptKey || '').trim()
+      const wxid = String(body.wxid || body.myWxid || '').trim()
+      if (!dbPath || !hexKey || !wxid) {
+        return { success: false, error: 'Missing required fields: dbPath, hexKey, wxid' }
+      }
+      return wcdbService.testConnection(dbPath, hexKey, wxid)
+    },
+    seedConfig: async ({ body }) => {
+      const cfg = configService || new ConfigService()
+      const dbPath = String(body.dbPath || '').trim()
+      const decryptKey = String(body.decryptKey || body.hexKey || '').trim()
+      const myWxid = String(body.myWxid || body.wxid || '').trim()
+
+      if (!dbPath || !decryptKey || !myWxid) {
+        return { success: false, error: 'Missing required fields: dbPath, decryptKey, myWxid' }
+      }
+
+      cfg.set('dbPath', dbPath as any)
+      cfg.set('decryptKey', decryptKey as any)
+      cfg.set('myWxid', myWxid as any)
+      cfg.set('onboardingDone', body.onboardingDone !== false)
+
+      if (typeof body.httpApiEnabled === 'boolean') {
+        cfg.set('httpApiEnabled', body.httpApiEnabled)
+      }
+      if (typeof body.httpApiPort === 'number' && Number.isFinite(body.httpApiPort)) {
+        cfg.set('httpApiPort', body.httpApiPort)
+      }
+      if (typeof body.httpApiHost === 'string' && body.httpApiHost.trim()) {
+        cfg.set('httpApiHost', body.httpApiHost.trim())
+      }
+      if (typeof body.httpApiToken === 'string') {
+        cfg.set('httpApiToken', body.httpApiToken.trim())
+      }
+      if (typeof body.messagePushEnabled === 'boolean') {
+        cfg.set('messagePushEnabled', body.messagePushEnabled)
+      }
+      if (typeof body.imageXorKey === 'number' && Number.isFinite(body.imageXorKey)) {
+        cfg.set('imageXorKey', body.imageXorKey)
+      }
+      if (typeof body.imageAesKey === 'string') {
+        cfg.set('imageAesKey', body.imageAesKey)
+      }
+
+      const wxidConfigs = (cfg.get('wxidConfigs') || {}) as Record<string, any>
+      wxidConfigs[myWxid] = {
+        ...(wxidConfigs[myWxid] || {}),
+        decryptKey,
+        ...(typeof body.imageXorKey === 'number' && Number.isFinite(body.imageXorKey) ? { imageXorKey: body.imageXorKey } : {}),
+        ...(typeof body.imageAesKey === 'string' ? { imageAesKey: body.imageAesKey } : {}),
+        updatedAt: Date.now()
+      }
+      cfg.set('wxidConfigs', wxidConfigs as any)
+
+      return {
+        success: true,
+        status: await getRuntimeStatusPayload()
+      }
+    }
+  }
+}
+
 // 启动时自动检测更新
 function checkForUpdatesOnStartup() {
   if (!AUTO_UPDATE_ENABLED) return
@@ -2719,8 +2968,12 @@ function checkForUpdatesOnStartup() {
 }
 
 app.whenReady().then(async () => {
+  const hiddenBackendLaunch = runtimeLaunchOptions.hiddenBackend
+
   // 立即创建 Splash 窗口，确保用户尽快看到反馈
-  createSplashWindow()
+  if (!hiddenBackendLaunch) {
+    createSplashWindow()
+  }
 
   // 等待 Splash 页面加载完成后再推送进度
   if (splashWindow) {
@@ -2741,6 +2994,7 @@ app.whenReady().then(async () => {
   // 初始化配置服务
   updateSplashProgress(5, '正在加载配置...')
   configService = new ConfigService()
+  httpService.setIntegrationHandlers(createRuntimeIntegrationHandlers(), runtimeLaunchOptions.integrationToken)
 
   // 将用户主题配置推送给 Splash 窗口
   if (splashWindow && !splashWindow.isDestroyed()) {
@@ -2776,6 +3030,13 @@ app.whenReady().then(async () => {
   })
   messagePushService.start()
   await delay(200)
+
+  if (hiddenBackendLaunch) {
+    await ensureRuntimeHttpApiStarted('hidden-backend')
+    const status = await getRuntimeStatusPayload()
+    console.log(`[WeFlow][runtime] hidden-backend ready ${JSON.stringify(status)}`)
+    return
+  }
 
   // 检查配置状态
   const onboardingDone = configService.get('onboardingDone')
@@ -2880,7 +3141,7 @@ app.whenReady().then(async () => {
   // 启动时检测更新（不阻塞启动）
   checkForUpdatesOnStartup()
 
-  await httpService.autoStart()
+  await ensureRuntimeHttpApiStarted('interactive-startup')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

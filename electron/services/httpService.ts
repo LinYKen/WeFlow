@@ -13,6 +13,23 @@ import { videoService } from './videoService'
 import { imageDecryptService } from './imageDecryptService'
 import { groupAnalyticsService } from './groupAnalyticsService'
 
+export interface RuntimeIntegrationContext {
+  req: http.IncomingMessage
+  url: URL
+  body: Record<string, any>
+}
+
+export interface RuntimeIntegrationHandlers {
+  getRuntimeStatus?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  autoDetectDbPath?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  scanWxids?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  scanWxidCandidates?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  autoGetDbKey?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  autoGetImageKey?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  testConnection?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+  seedConfig?: (ctx: RuntimeIntegrationContext) => Promise<any> | any
+}
+
 // ChatLab 格式定义
 interface ChatLabHeader {
   version: string
@@ -107,9 +124,18 @@ class HttpService {
   private messagePushClients: Set<http.ServerResponse> = new Set()
   private messagePushHeartbeatTimer: ReturnType<typeof setInterval> | null = null
   private connectionMutex: boolean = false
+  private integrationToken: string = String(process.env.WEFLOW_INTEGRATION_TOKEN || '').trim()
+  private integrationHandlers: RuntimeIntegrationHandlers = {}
 
   constructor() {
     this.configService = ConfigService.getInstance()
+  }
+
+  setIntegrationHandlers(handlers: RuntimeIntegrationHandlers, integrationToken?: string): void {
+    this.integrationHandlers = handlers
+    if (typeof integrationToken === 'string') {
+      this.integrationToken = integrationToken.trim()
+    }
   }
 
   /**
@@ -303,6 +329,58 @@ class HttpService {
 
     }
 
+    private verifyIntegrationToken(req: http.IncomingMessage, url: URL, body: Record<string, any>): boolean {
+        const expectedToken = this.integrationToken || String(process.env.WEFLOW_INTEGRATION_TOKEN || '').trim()
+        if (!expectedToken) return true
+
+        const authHeader = req.headers.authorization
+        if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+            const token = authHeader.substring(7).trim()
+            if (token === expectedToken) return true
+        }
+
+        const queryToken = url.searchParams.get('integration_token')
+        if (queryToken && queryToken.trim() === expectedToken) return true
+
+        const bodyToken = body['integration_token']
+        return !!(bodyToken && String(bodyToken).trim() === expectedToken)
+    }
+
+    private isIntegrationPath(pathname: string): boolean {
+      return pathname === '/api/v1/runtime/status' || pathname.startsWith('/api/v1/bootstrap/')
+    }
+
+    private async handleIntegrationRequest(pathname: string, ctx: RuntimeIntegrationContext): Promise<any> {
+      switch (pathname) {
+        case '/api/v1/runtime/status':
+          if (!this.integrationHandlers.getRuntimeStatus) throw new Error('runtime status handler unavailable')
+          return this.integrationHandlers.getRuntimeStatus(ctx)
+        case '/api/v1/bootstrap/auto-detect-db-path':
+          if (!this.integrationHandlers.autoDetectDbPath) throw new Error('auto-detect-db-path handler unavailable')
+          return this.integrationHandlers.autoDetectDbPath(ctx)
+        case '/api/v1/bootstrap/scan-wxids':
+          if (!this.integrationHandlers.scanWxids) throw new Error('scan-wxids handler unavailable')
+          return this.integrationHandlers.scanWxids(ctx)
+        case '/api/v1/bootstrap/scan-wxid-candidates':
+          if (!this.integrationHandlers.scanWxidCandidates) throw new Error('scan-wxid-candidates handler unavailable')
+          return this.integrationHandlers.scanWxidCandidates(ctx)
+        case '/api/v1/bootstrap/auto-get-db-key':
+          if (!this.integrationHandlers.autoGetDbKey) throw new Error('auto-get-db-key handler unavailable')
+          return this.integrationHandlers.autoGetDbKey(ctx)
+        case '/api/v1/bootstrap/auto-get-image-key':
+          if (!this.integrationHandlers.autoGetImageKey) throw new Error('auto-get-image-key handler unavailable')
+          return this.integrationHandlers.autoGetImageKey(ctx)
+        case '/api/v1/bootstrap/test-connection':
+          if (!this.integrationHandlers.testConnection) throw new Error('test-connection handler unavailable')
+          return this.integrationHandlers.testConnection(ctx)
+        case '/api/v1/bootstrap/seed-config':
+          if (!this.integrationHandlers.seedConfig) throw new Error('seed-config handler unavailable')
+          return this.integrationHandlers.seedConfig(ctx)
+        default:
+          throw new Error('integration route not found')
+      }
+    }
+
     /**
      * 处理 HTTP 请求 (重构后)
      */
@@ -327,6 +405,16 @@ class HttpService {
                 if (!url.searchParams.has(key)) {
                     url.searchParams.set(key, String(value))
                 }
+            }
+
+            if (this.isIntegrationPath(pathname)) {
+                if (!this.verifyIntegrationToken(req, url, bodyParams)) {
+                    this.sendError(res, 401, 'Unauthorized: Invalid or missing integration token')
+                    return
+                }
+                const payload = await this.handleIntegrationRequest(pathname, { req, url, body: bodyParams })
+                this.sendJson(res, payload)
+                return
             }
 
             if (pathname !== '/health' && pathname !== '/api/v1/health') {
